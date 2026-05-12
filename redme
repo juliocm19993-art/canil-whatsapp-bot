@@ -1,0 +1,8 @@
+git add .
+git commit -m "corrige dashboard vercel"
+git push
+
+
+npm run bot  
+
+npm run dev

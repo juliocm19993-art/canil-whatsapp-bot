@@ -1,18 +1,6 @@
-async function buscarDados() {
-  const [clientesRes, mensagensRes, filhotesRes, informacoesRes] = await Promise.all([
-    fetch("http://localhost:3000/api/clientes", { cache: "no-store" }),
-    fetch("http://localhost:3000/api/mensagens", { cache: "no-store" }),
-    fetch("http://localhost:3000/api/filhotes", { cache: "no-store" }),
-    fetch("http://localhost:3000/api/informacoes", { cache: "no-store" }),
-  ]);
+"use client";
 
-  return {
-    clientes: await clientesRes.json(),
-    mensagens: await mensagensRes.json(),
-    filhotes: await filhotesRes.json(),
-    informacoes: await informacoesRes.json(),
-  };
-}
+import { useEffect, useState } from "react";
 
 function Card({ titulo, valor, detalhe }: { titulo: string; valor: any; detalhe: string }) {
   return (
@@ -24,11 +12,41 @@ function Card({ titulo, valor, detalhe }: { titulo: string; valor: any; detalhe:
   );
 }
 
-export default async function DashboardPage() {
-  const { clientes, mensagens, filhotes, informacoes } = await buscarDados();
+export default function DashboardPage() {
+  const [clientes, setClientes] = useState<any[]>([]);
+  const [mensagens, setMensagens] = useState<any[]>([]);
+  const [filhotes, setFilhotes] = useState<any[]>([]);
+  const [informacoes, setInformacoes] = useState<any[]>([]);
+  const [carregando, setCarregando] = useState(true);
+
+  async function buscarDados() {
+    try {
+      const [clientesRes, mensagensRes, filhotesRes, informacoesRes] = await Promise.all([
+        fetch("/api/clientes"),
+        fetch("/api/mensagens"),
+        fetch("/api/filhotes"),
+        fetch("/api/informacoes"),
+      ]);
+
+      setClientes(await clientesRes.json());
+      setMensagens(await mensagensRes.json());
+      setFilhotes(await filhotesRes.json());
+      setInformacoes(await informacoesRes.json());
+    } finally {
+      setCarregando(false);
+    }
+  }
+
+  useEffect(() => {
+    buscarDados();
+  }, []);
 
   const disponiveis = filhotes.filter((f: any) => f.status === "disponivel");
   const recebidas = mensagens.filter((m: any) => m.direcao === "recebida");
+
+  if (carregando) {
+    return <p>Carregando dashboard...</p>;
+  }
 
   return (
     <div>

@@ -1,4 +1,7 @@
-import makeWASocket, { useMultiFileAuthState } from "@whiskeysockets/baileys";
+import makeWASocket, {
+  useMultiFileAuthState,
+  DisconnectReason,
+} from "@whiskeysockets/baileys";
 import qrcode from "qrcode-terminal";
 import pino from "pino";
 import { supabase } from "../lib/supabase";
@@ -566,11 +569,21 @@ sock.ev.on("connection.update", async (update) => {
     console.log("✅ WhatsApp conectado com sucesso!");
   }
 
-  if (connection === "close") {
-    console.log("❌ Conexão fechada.");
+if (connection === "close") {
+  const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
 
-    console.log(lastDisconnect);
+  console.log("❌ Conexão fechada. Código:", statusCode);
+
+  const deveReconectar =
+    statusCode !== DisconnectReason.loggedOut;
+
+  if (deveReconectar) {
+    console.log("🔄 Reconectando WhatsApp...");
+    startBot();
+  } else {
+    console.log("Sessão deslogada. Apague auth_info e escaneie novamente.");
   }
+}
 });
 
   sock.ev.on("messages.upsert", async ({ messages }) => {

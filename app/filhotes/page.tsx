@@ -179,22 +179,7 @@ async function uploadArquivos(
           <input placeholder="Cor" value={form.cor} onChange={(e) => setForm({ ...form, cor: e.target.value })} style={input} />
           <input type="date" value={form.data_nascimento || ""} onChange={(e) => setForm({ ...form, data_nascimento: e.target.value })} style={input} />
           <input type="date" value={form.data_disponivel || ""} onChange={(e) => setForm({ ...form, data_disponivel: e.target.value })} style={input} />
-        <input
-  type="text"
-  placeholder="Valor"
-  value={form.valor}
-  onChange={(e) => {
-    let valor = e.target.value;
-
-    valor = valor.replace(/\D/g, "");
-
-    valor = (Number(valor) / 100).toLocaleString("pt-BR", {
-      minimumFractionDigits: 2,
-    });
-
-    setForm({ ...form, valor });
-  }}
-/>
+          <input placeholder="Valor" value={form.valor || ""} onChange={(e) => setForm({ ...form, valor: e.target.value })} style={input} />
           <textarea placeholder="Descrição" value={form.descricao || ""} onChange={(e) => setForm({ ...form, descricao: e.target.value })} rows={4} style={input} />
 
           <div style={uploadBox}>

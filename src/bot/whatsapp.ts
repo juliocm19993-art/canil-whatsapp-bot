@@ -2,6 +2,7 @@ import makeWASocket, { useMultiFileAuthState } from "@whiskeysockets/baileys";
 import qrcode from "qrcode-terminal";
 import pino from "pino";
 import { supabase } from "../lib/supabase";
+import http from "http";
 
 const logger = pino({ level: "silent" });
 const clientesApresentados = new Set<string>();
@@ -842,5 +843,16 @@ if (textoLower === "5") {
     }
   });
 }
+
+const PORT = process.env.PORT || 3000;
+
+http
+  .createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("Bot WhatsApp online");
+  })
+  .listen(PORT, () => {
+    console.log(`Servidor HTTP rodando na porta ${PORT}`);
+  });
 
 startBot();

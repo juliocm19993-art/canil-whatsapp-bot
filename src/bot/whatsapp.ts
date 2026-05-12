@@ -1,0 +1,846 @@
+import makeWASocket, { useMultiFileAuthState } from "@whiskeysockets/baileys";
+import qrcode from "qrcode-terminal";
+import pino from "pino";
+import { supabase } from "../lib/supabase";
+
+const logger = pino({ level: "silent" });
+const clientesApresentados = new Set<string>();
+const atendimentoHumano = new Set<string>();
+
+async function salvarCliente(telefone: string) {
+  const { error } = await supabase.from("clientes").upsert(
+    {
+      telefone,
+      atualizado_em: new Date().toISOString(),
+    },
+    { onConflict: "telefone" }
+  );
+
+  if (error) console.log("Erro ao salvar cliente:", error.message);
+  else console.log("Cliente salvo no Supabase:", telefone);
+}
+
+async function salvarMensagem(
+  telefone: string,
+  mensagem: string,
+  direcao: string
+) {
+  const { error } = await supabase.from("mensagens").insert({
+    telefone,
+    mensagem,
+    direcao,
+  });
+
+  if (error) console.log("Erro ao salvar mensagem:", error.message);
+  else console.log("Mensagem salva no Supabase:", direcao);
+}
+
+async function buscarInformacoesCanil() {
+  const { data, error } = await supabase
+    .from("informacoes_canil")
+    .select("titulo,categoria,conteudo")
+    .eq("ativo", true);
+
+  if (error || !data || data.length === 0) {
+    return "";
+  }
+
+  return data.map((info) => info.conteudo).join("\n\n");
+}
+
+async function buscarFilhotesDisponiveis() {
+  const { data, error } = await supabase
+    .from("filhotes_catalogo")
+    .select("*")
+    .eq("status", "disponivel")
+    .order("criado_em", { ascending: false });
+
+  if (error) {
+    console.log("Erro ao buscar filhotes:", error.message);
+    return "";
+  }
+
+  if (!data || data.length === 0) {
+    return "";
+  }
+
+  return data
+    .map((f) => {
+      const linhas = [];
+
+      linhas.push(`🐶 Nome: ${f.nome || "Filhote disponível"}`);
+      if (f.cor) linhas.push(`🎨 Cor: ${f.cor}`);
+      if (f.sexo) linhas.push(`🚹 Sexo: ${f.sexo}`);
+      if (f.valor) linhas.push(`💰 Valor: R$ ${f.valor}`);
+      if (f.data_disponivel)
+        linhas.push(`📅 Disponível em: ${f.data_disponivel}`);
+
+      return linhas.join("\n");
+    })
+    .join("\n\n");
+}
+
+async function buscarFilhotesComMidia() {
+  const { data, error } = await supabase
+    .from("filhotes_catalogo")
+    .select("*")
+    .eq("status", "disponivel")
+    .order("criado_em", { ascending: false });
+
+  if (error) {
+    console.log("Erro ao buscar mídias:", error.message);
+    return [];
+  }
+
+  return data || [];
+}
+
+async function enviarMidiasFilhotes(sock: any, telefone: string) {
+  const filhotes = await buscarFilhotesComMidia();
+
+  const filhotesComMidia = filhotes.filter((filhote) => {
+    const fotos = filhote.fotos?.length
+      ? filhote.fotos
+      : filhote.foto_url
+      ? [filhote.foto_url]
+      : [];
+
+    const videos = filhote.videos?.length ? filhote.videos : [];
+
+    return fotos.length > 0 || videos.length > 0;
+  });
+
+if (filhotesComMidia.length === 0) {
+  const resposta =
+    (await buscarInfoPorCategoria("filhotes")) ||
+    (await buscarInfoPorCategoria("reservas")) ||
+    "Vou verificar essa informação com o responsável 🐶";
+
+  await sock.sendMessage(telefone, { text: resposta });
+  await salvarMensagem(telefone, resposta, "enviada");
+  return;
+}
+
+  for (const filhote of filhotesComMidia) {
+    const fotos = filhote.fotos?.length
+      ? filhote.fotos
+      : filhote.foto_url
+      ? [filhote.foto_url]
+      : [];
+
+    const videos = filhote.videos?.length ? filhote.videos : [];
+
+    const legenda = `🐶 ${filhote.nome || "Filhote disponível"}
+${filhote.cor ? `🎨 Cor: ${filhote.cor}` : ""}
+${filhote.sexo ? `🚹 Sexo: ${filhote.sexo}` : ""}
+${filhote.valor ? `💰 Valor: R$ ${filhote.valor}` : ""}
+${filhote.data_disponivel ? `📅 Disponível em: ${filhote.data_disponivel}` : ""}
+
+Quer saber mais sobre esse filhote ou fazer uma reserva? 😊`;
+
+    let primeiraMidia = true;
+
+    for (const video of videos) {
+      await sock.sendMessage(telefone, {
+        video: { url: video },
+        caption: primeiraMidia ? legenda : undefined,
+      });
+
+      primeiraMidia = false;
+      await salvarMensagem(telefone, `Vídeo enviado: ${video}`, "enviada");
+    }
+
+    for (const foto of fotos) {
+      await sock.sendMessage(telefone, {
+        image: { url: foto },
+        caption: primeiraMidia ? legenda : undefined,
+      });
+
+      primeiraMidia = false;
+      await salvarMensagem(telefone, `Foto enviada: ${foto}`, "enviada");
+    }
+  }
+
+  console.log("Fotos/vídeos enviados!");
+}
+
+async function buscarHistoricoCliente(telefone: string) {
+  const { data, error } = await supabase
+    .from("mensagens")
+    .select("*")
+    .eq("telefone", telefone)
+    .order("criado_em", { ascending: false })
+    .limit(10);
+
+  if (error || !data) return "";
+
+  return data
+    .reverse()
+    .map((m) => {
+      return `${m.direcao === "recebida" ? "Cliente" : "Atendente"}: ${
+        m.mensagem
+      }`;
+    })
+    .join("\n");
+}
+
+function querComprarOuReservar(texto: string) {
+  const t = texto.toLowerCase().trim();
+
+  return (
+    t.includes("quero reservar") ||
+    t.includes("reserva") ||
+    t.includes("quero comprar") ||
+    t.includes("tenho interesse") ||
+    t.includes("quero fechar") ||
+    t.includes("como comprar") ||
+    t.includes("como reservar") ||
+    t.includes("faz desconto") ||
+    t.includes("tem desconto") ||
+    t.includes("desconto") ||
+    t.includes("valor negociável") ||
+    t.includes("valor negociavel")
+  );
+}
+
+function pediuMenu(texto: string) {
+  const t = texto.toLowerCase().trim();
+
+  return (
+    t.includes("mais info") ||
+    t.includes("mais informações") ||
+    t.includes("mais informacoes") ||
+    t.includes("infos") ||
+    t === "info" ||
+    t === "informação" ||
+    t === "informações" ||
+    t === "informacao" ||
+    t === "informacoes" ||
+    t.includes("quero saber mais")
+  );
+}
+
+function pediuHumano(texto: string) {
+  const t = texto.toLowerCase().trim();
+
+  return (
+    t.includes("falar com uma pessoa") ||
+    t.includes("falar com atendente") ||
+    t.includes("falar com alguém") ||
+    t.includes("falar com alguem") ||
+    t.includes("responsável") ||
+    t.includes("responsavel") ||
+    t.includes("humano") ||
+    t.includes("criador")
+  );
+}
+
+function pediuMidiaOuFilhote(texto: string) {
+  const t = texto.toLowerCase().trim();
+
+  const gatilhos = [
+    "filhotes",
+    "filhote",
+    "tem macho",
+    "tem fêmea",
+    "tem femea",
+    "quero ver",
+    "ver fotos",
+    "ver foto",
+    "ver vídeos",
+    "ver videos",
+    "me mostra",
+    "mostrar filhote",
+    "mostrar filhotes",
+    "manda foto",
+    "envia foto",
+    "manda vídeo",
+    "manda video",
+  ];
+
+  return gatilhos.some((g) => t.includes(g));
+}
+
+function ehElogio(texto: string) {
+  const t = texto.toLowerCase().trim();
+
+  const elogios = [
+    "lindo",
+    "lindos",
+    "fofo",
+    "fofos",
+    "fofinho",
+    "fofinhos",
+    "amei",
+    "bonito",
+    "bonitos",
+    "que lindo",
+    "que lindos",
+  ];
+
+  return elogios.some((e) => t.includes(e));
+}
+
+function ehMensagemCurtaConfusa(texto: string) {
+  const t = texto.toLowerCase().trim();
+  return t === "?" || t === "??" || t === "???" || t === "sim" || t === "ok";
+}
+
+async function responderMenu(sock: any, telefone: string) {
+  const resposta = `Claro 😊 Sobre o que você gostaria de saber?
+
+1️⃣ Filhotes disponíveis
+2️⃣ O que acompanha o filhote
+3️⃣ Entrega
+4️⃣ Valores
+5️⃣ Reservas`;
+
+  await sock.sendMessage(telefone, { text: resposta });
+  await salvarMensagem(telefone, resposta, "enviada");
+}
+
+async function gerarRespostaIA(texto: string) {
+  const informacoesCanil = await buscarInformacoesCanil();
+  const filhotesDisponiveis = await buscarFilhotesDisponiveis();
+
+  try {
+    const response = await fetch(
+      "https://api.groq.com/openai/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "llama-3.3-70b-versatile",
+          temperature: 0.2,
+          messages: [
+            {
+              role: "system",
+              content: `
+Você é a assistente virtual do Canil Morvians Bull, especializado em Bulldog Francês.
+
+OBJETIVO:
+Atender clientes pelo WhatsApp de forma natural, simpática, rápida e profissional.
+
+INFORMAÇÕES OFICIAIS DO CANIL:
+${informacoesCanil}
+
+FILHOTES DISPONÍVEIS:
+${filhotesDisponiveis}
+
+━━━━━━━━━━━━━━━━━━━
+REGRAS PRINCIPAIS
+━━━━━━━━━━━━━━━━━━━
+
+Use SOMENTE as informações fornecidas acima.
+Nunca invente:
+• valores
+• datas
+• disponibilidade
+• entrega
+• pedigree
+• reservas
+• filhotes
+Quando existir uma informação oficial no banco:
+responda usando exatamente o conteúdo cadastrado.
+Preserve:
+• emojis
+• quebras de linha
+• pontuação
+• estrutura original
+Nunca escreva:
+• "Título"
+• "Categoria"
+• "Conteúdo"
+Não misture assuntos diferentes.
+Não envie várias informações do banco ao mesmo tempo.
+Seja objetiva e natural.
+Fale somente em porguês do Brasil.
+
+━━━━━━━━━━━━━━━━━━━
+FILHOTES
+━━━━━━━━━━━━━━━━━━━
+
+Se houver filhotes cadastrados em FILHOTES DISPONÍVEIS:
+responda usando apenas os filhotes cadastrados.
+Quando perguntarem:
+• tem filhotes
+• disponibilidade
+• macho
+• fêmea
+• valor
+• quais filhotes possuem
+
+use apenas os dados dos filhotes cadastrados.
+
+NÃO use informação de próxima ninhada se existirem filhotes disponíveis.
+Se NÃO houver filhotes disponíveis:
+use a informação oficial sobre:
+• próxima ninhada
+• reservas
+• disponibilidade futura
+
+━━━━━━━━━━━━━━━━━━━
+FORMATO PARA FILHOTES
+━━━━━━━━━━━━━━━━━━━
+
+Temos filhotes disponíveis 🐶
+
+🐶 Nome: ...
+🎨 Cor: ...
+🚹 Sexo: ...
+💰 Valor: ...
+📅 Disponível em: ...
+
+━━━━━━━━━━━━━━━━━━━
+ATENDIMENTO HUMANO
+━━━━━━━━━━━━━━━━━━━
+
+Se o cliente pedir:
+• atendente
+• humano
+• responsável
+• criador
+• pessoa real
+
+responda exatamente:
+
+"Claro 😊 Em breve o responsável pelo canil irá te responder."
+
+━━━━━━━━━━━━━━━━━━━
+CONVERSA NORMAL
+━━━━━━━━━━━━━━━━━━━
+
+Converse como uma atendente humana real.
+Seja simpática e natural.
+NÃO responda "vou verificar" para conversa comum.
+
+Exemplos de conversa comum:
+• legal
+• ok
+• show
+• entendi
+• aguardo
+• obrigado
+• valeu
+• que lindo
+• fofinho
+• gostei
+
+━━━━━━━━━━━━━━━━━━━
+EXEMPLOS
+━━━━━━━━━━━━━━━━━━━
+
+Cliente:
+"legal"
+
+Resposta:
+"Que bom 😊"
+
+Cliente:
+"aguardo"
+
+Resposta:
+"Perfeito 😊"
+
+Cliente:
+"que lindo"
+
+Resposta:
+"Ficamos felizes que gostou 😊🐶"
+
+Cliente:
+"obrigado"
+
+Resposta:
+"Eu que agradeço 😊"
+
+Cliente:
+"quero comprar um"
+
+Resposta:
+"Que ótimo 😊🐶"
+
+━━━━━━━━━━━━━━━━━━━
+QUANDO USAR:
+"Vou verificar essa informação com o responsável 🐶"
+━━━━━━━━━━━━━━━━━━━
+
+Use essa resposta SOMENTE quando:
+
+o cliente perguntar algo específico do canil
+E
+essa informação não existir no banco
+
+Exemplos:
+• entrega
+• desconto
+• garantia
+• saúde
+• pedigree
+• reserva
+• contrato
+• formas de pagamento
+
+━━━━━━━━━━━━━━━━━━━
+COMPORTAMENTO
+━━━━━━━━━━━━━━━━━━━
+
+Fale sempre em português do Brasil.
+Seja natural.
+Seja rápida.
+Não seja robótica.
+Não repita catálogo sem necessidade.
+Não force venda.
+Use poucos emojis.
+Responda de forma curta na maioria das vezes.
+
+`,
+            },
+            {
+              role: "user",
+              content: texto,
+            },
+          ],
+        }),
+      }
+    );
+
+    const data = await response.json();
+    const resposta = data?.choices?.[0]?.message?.content?.trim();
+
+    return resposta || "Claro 🐶 Vou verificar essa informação para você.";
+  } catch (error) {
+    console.log("Erro IA:", error);
+    return "Desculpe 🐶 Tive um probleminha aqui. Vou pedir para o responsável verificar.";
+  }
+}
+
+async function buscarInfoPorCategoria(categoria: string) {
+  const { data, error } = await supabase
+    .from("informacoes_canil")
+    .select("conteudo")
+    .eq("ativo", true)
+    .ilike("categoria", categoria)
+    .limit(1);
+
+  if (error || !data || data.length === 0) {
+    return "";
+  }
+
+  return data[0].conteudo;
+}
+
+async function startBot() {
+  console.log("Iniciando bot...");
+
+  const { state, saveCreds } = await useMultiFileAuthState("auth_info");
+
+const sock = makeWASocket({
+  auth: state,
+  logger,
+  printQRInTerminal: true,
+  browser: ["Chrome", "Windows", "120.0.0"],
+  version: [2, 3000, 1034074495],
+  syncFullHistory: false,
+  markOnlineOnConnect: false,
+});
+
+  sock.ev.on("creds.update", saveCreds);
+
+sock.ev.on("connection.update", async (update) => {
+  const { connection, qr, lastDisconnect } = update;
+
+  if (qr) {
+    console.log("QR RECEBIDO");
+
+    qrcode.generate(qr, {
+      small: true,
+    });
+  }
+
+  if (connection === "open") {
+    console.log("✅ WhatsApp conectado com sucesso!");
+  }
+
+  if (connection === "close") {
+    console.log("❌ Conexão fechada.");
+
+    console.log(lastDisconnect);
+  }
+});
+
+  sock.ev.on("messages.upsert", async ({ messages }) => {
+    try {
+      const msg = messages[0];
+
+      if (!msg.message) return;
+
+      const texto =
+        msg.message.conversation ||
+        msg.message.extendedTextMessage?.text ||
+        "";
+
+      const telefone = msg.key.remoteJid;
+      if (!telefone) return;
+
+      const textoLower = texto.toLowerCase().trim();
+
+      if (msg.key.fromMe) {
+        if (textoLower === "/ia on") {
+          atendimentoHumano.delete(telefone);
+
+          await sock.sendMessage(telefone, {
+            delete: msg.key,
+          });
+
+          console.log("IA reativada para:", telefone);
+        }
+
+        if (textoLower === "/ia off") {
+          atendimentoHumano.add(telefone);
+
+          await sock.sendMessage(telefone, {
+            delete: msg.key,
+          });
+
+          console.log("IA pausada para:", telefone);
+        }
+
+        return;
+      }
+
+      if (atendimentoHumano.has(telefone)) {
+        console.log("Atendimento humano ativo. IA não respondeu:", telefone);
+        return;
+      }
+
+      if (!texto) return;
+
+      console.log("Mensagem recebida:", texto);
+
+      await salvarCliente(telefone);
+      await salvarMensagem(telefone, texto, "recebida");
+
+      if (!clientesApresentados.has(telefone)) {
+        clientesApresentados.add(telefone);
+
+        const respostaBoasVindas = `Olá, bem-vindo ao Canil Morvians Bull 🐶
+
+Sou a assistente virtual do canil e posso te ajudar com informações sobre Bulldogs Franceses, disponibilidade, fotos, valores e reservas 😊`;
+
+        await sock.sendMessage(telefone, { text: respostaBoasVindas });
+        await salvarMensagem(telefone, respostaBoasVindas, "enviada");
+
+        console.log("Mensagem de boas-vindas enviada!");
+        return;
+      }
+if (querComprarOuReservar(texto)) {
+  atendimentoHumano.add(telefone);
+
+  const resposta = `Que ótimo 😊🐶
+
+Ficamos muito felizes com o seu interesse em nossos filhotes.
+
+Agora seu atendimento será encaminhado para o responsável do canil 👨‍💼
+
+Em instantes, ele irá entrar no char e tirar suas dividas.
+
+🤖 Atendimento automático finalizado.
+📞 Aguarde só um momento, será um prazer atender você.`;
+
+  await sock.sendMessage(telefone, {
+    text: resposta,
+  });
+
+  await salvarMensagem(telefone, resposta, "enviada");
+
+  return;
+}
+const mensagensSimples = [
+  "ok",
+  "oi",
+  "ola",
+  "olá",
+  "👍",
+  "?",
+  "kkk",
+  "show",
+  "top",
+  "legal",
+  "aguardo",
+  "valeu",
+  "obrigado",
+  "obg",
+  "sim",
+  "não",
+  "nao",
+];
+
+if (mensagensSimples.includes(textoLower)) {
+  let resposta = "😊";
+
+  if (textoLower === "aguardo") {
+    resposta = "Perfeito 😊";
+  }
+
+  if (
+    textoLower === "obrigado" ||
+    textoLower === "obg"
+  ) {
+    resposta = "Eu que agradeço 😊";
+  }
+
+  if (
+    textoLower === "oi" ||
+    textoLower === "ola" ||
+    textoLower === "olá"
+  ) {
+    resposta =
+      "Olá 😊 Como posso te ajudar?";
+  }
+
+  await sock.sendMessage(telefone, {
+    text: resposta,
+  });
+
+  await salvarMensagem(
+    telefone,
+    resposta,
+    "enviada"
+  );
+
+  return;
+}
+
+if (
+  textoLower.includes("falar com") ||
+  textoLower.includes("atendente") ||
+  textoLower.includes("humano") ||
+  textoLower.includes("responsável") ||
+  textoLower.includes("responsavel")
+) {
+  atendimentoHumano.add(telefone);
+
+  const resposta =
+    "Claro 😊 Em breve o responsável pelo canil irá te responder.";
+
+  await sock.sendMessage(telefone, {
+    text: resposta,
+  });
+
+  await salvarMensagem(
+    telefone,
+    resposta,
+    "enviada"
+  );
+
+  return;
+}
+
+      if (pediuHumano(texto)) {
+        atendimentoHumano.add(telefone);
+
+        const resposta =
+          "Claro 😊 Em breve o responsável pelo canil irá te responder.";
+
+        await sock.sendMessage(telefone, { text: resposta });
+        await salvarMensagem(telefone, resposta, "enviada");
+
+        return;
+      }
+
+      if (pediuMenu(texto)) {
+        await responderMenu(sock, telefone);
+        return;
+      }
+
+      if (textoLower === "1") {
+        await enviarMidiasFilhotes(sock, telefone);
+        return;
+      }
+
+if (textoLower === "2") {
+  const resposta =
+    (await buscarInfoPorCategoria("acompanha")) ||
+    "Vou verificar essa informação com o responsável 🐶";
+
+  await sock.sendMessage(telefone, { text: resposta });
+  await salvarMensagem(telefone, resposta, "enviada");
+  return;
+}
+
+if (textoLower === "3") {
+  const resposta =
+    (await buscarInfoPorCategoria("entrega")) ||
+    "Vou verificar essa informação com o responsável 🐶";
+
+  await sock.sendMessage(telefone, { text: resposta });
+  await salvarMensagem(telefone, resposta, "enviada");
+  return;
+}
+
+if (textoLower === "4") {
+  const resposta =
+    (await buscarInfoPorCategoria("valores")) ||
+    "Vou verificar essa informação com o responsável 🐶";
+
+  await sock.sendMessage(telefone, { text: resposta });
+  await salvarMensagem(telefone, resposta, "enviada");
+  return;
+}
+
+if (textoLower === "5") {
+  const resposta =
+    (await buscarInfoPorCategoria("reservas")) ||
+    "Vou verificar essa informação com o responsável 🐶";
+
+  await sock.sendMessage(telefone, { text: resposta });
+  await salvarMensagem(telefone, resposta, "enviada");
+  return;
+}
+
+      if (ehElogio(texto)) {
+        const resposta = "Ficamos felizes que gostou 😊";
+
+        await sock.sendMessage(telefone, { text: resposta });
+        await salvarMensagem(telefone, resposta, "enviada");
+        return;
+      }
+
+      if (ehMensagemCurtaConfusa(texto)) {
+        const resposta =
+          "😊 Posso te ajudar com valores, entrega, reservas ou informações sobre os filhotes.";
+
+        await sock.sendMessage(telefone, { text: resposta });
+        await salvarMensagem(telefone, resposta, "enviada");
+        return;
+      }
+
+      if (pediuMidiaOuFilhote(texto)) {
+        console.log("Cliente perguntou sobre filhote/foto/vídeo!");
+        await enviarMidiasFilhotes(sock, telefone);
+        return;
+      }
+
+      const historico = await buscarHistoricoCliente(telefone);
+
+
+      
+      const resposta = await gerarRespostaIA(
+        historico + "\nCliente: " + texto
+      );
+
+      await sock.sendMessage(telefone, { text: resposta });
+      await salvarMensagem(telefone, resposta, "enviada");
+
+      console.log("Resposta enviada!");
+    } catch (error) {
+      console.log("Erro geral:", error);
+    }
+  });
+}
+
+startBot();

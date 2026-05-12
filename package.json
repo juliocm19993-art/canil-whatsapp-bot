@@ -1,0 +1,30 @@
+{
+  "name": "canil-whatsapp-ia",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "bot": "tsx bot.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.105.4",
+    "@whiskeysockets/baileys": "^6.7.18",
+    "dotenv": "^17.4.2",
+    "next": "latest",
+    "openai": "latest",
+    "pino": "^10.3.1",
+    "qrcode-terminal": "^0.12.0",
+    "react": "latest",
+    "react-dom": "latest",
+    "tsx": "^4.21.0",
+    "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/ws": "^8.18.1",
+    "typescript": "latest"
+  }
+}

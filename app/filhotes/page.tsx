@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-
+import { supabase } from "../../src/lib/supabase";
 const vazio = {
   id: "",
   nome: "",
@@ -28,29 +28,73 @@ export default function FilhotesPage() {
     setFilhotes(await res.json());
   }
 
-  async function uploadArquivos(files: FileList | null, tipo: "fotos" | "videos") {
-    if (!files || files.length === 0) return;
-    setEnviando(true);
+async function uploadArquivos(
+  files: FileList | null,
+  tipo: "fotos" | "videos"
+) {
+  if (!files || files.length === 0) return;
 
-    const formData = new FormData();
-    Array.from(files).forEach((file) => formData.append("arquivos", file));
+  setEnviando(true);
 
-    const res = await fetch("/api/upload", { method: "POST", body: formData });
-    const data = await res.json();
+  try {
+    const urls: string[] = [];
 
-    if (data.urls) {
-      setForm((prev: any) => ({
-        ...prev,
-        [tipo]: [...(prev[tipo] || []), ...data.urls],
-        foto_url:
-          tipo === "fotos" && !prev.foto_url
-            ? data.urls[0] || ""
-            : prev.foto_url,
-      }));
+    for (const file of Array.from(files)) {
+      const isVideo = tipo === "videos";
+
+      const tamanhoMB = file.size / 1024 / 1024;
+
+      if (isVideo && tamanhoMB > 50) {
+        alert("Vídeo muito grande. Máximo 50MB.");
+        continue;
+      }
+
+      const ext = file.name.split(".").pop();
+
+      const nomeArquivo = `${Date.now()}-${Math.random()
+        .toString(36)
+        .substring(2)}.${ext}`;
+
+      const pasta = isVideo ? "videos" : "fotos";
+
+      const caminho = `${pasta}/${nomeArquivo}`;
+
+      const { error } = await supabase.storage
+        .from("filhotes")
+        .upload(caminho, file, {
+          cacheControl: "3600",
+          upsert: false,
+          contentType: file.type,
+        });
+
+      if (error) {
+        console.log(error);
+        alert(error.message);
+        continue;
+      }
+
+      const { data } = supabase.storage
+        .from("filhotes")
+        .getPublicUrl(caminho);
+
+      urls.push(data.publicUrl);
     }
 
-    setEnviando(false);
+    setForm((prev: any) => ({
+      ...prev,
+      [tipo]: [...(prev[tipo] || []), ...urls],
+      foto_url:
+        tipo === "fotos" && !prev.foto_url
+          ? urls[0] || ""
+          : prev.foto_url,
+    }));
+  } catch (error) {
+    console.log(error);
+    alert("Erro ao enviar arquivos");
   }
+
+  setEnviando(false);
+}
 
   async function salvar(e: React.FormEvent) {
     e.preventDefault();

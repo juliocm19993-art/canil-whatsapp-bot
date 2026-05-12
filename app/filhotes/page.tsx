@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { supabase } from "../../src/lib/supabase";
+import { createClient } from "@supabase/supabase-js";
 const vazio = {
   id: "",
   nome: "",
@@ -16,6 +16,17 @@ const vazio = {
   videos: [] as string[],
   status: "disponivel",
 };
+
+function getSupabaseBrowser() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!url || !key) {
+    throw new Error("Supabase URL ou ANON KEY não configurada.");
+  }
+
+  return createClient(url, key);
+}
 
 export default function FilhotesPage() {
   const [filhotes, setFilhotes] = useState<any[]>([]);
@@ -37,7 +48,9 @@ async function uploadArquivos(
   setEnviando(true);
 
   try {
-    const urls: string[] = [];
+    const urls: string[] = [];    
+
+    const supabase = getSupabaseBrowser();
 
     for (const file of Array.from(files)) {
       const isVideo = tipo === "videos";

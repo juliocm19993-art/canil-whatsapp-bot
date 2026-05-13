@@ -687,7 +687,7 @@ if (
 
 if (textoLower === "2") {
   const resposta =
-    (await buscarInfoPorCategoria("valores")) ||
+    (await buscarRespostaExata("valores pagamento preço parcelamento")) ||
     "Vou verificar essa informação com o responsável 🐶";
 
   await sock.sendMessage(telefone, { text: resposta });
@@ -697,7 +697,7 @@ if (textoLower === "2") {
 
 if (textoLower === "3") {
   const resposta =
-    (await buscarInfoPorCategoria("entrega")) ||
+    (await buscarRespostaExata("entrega frete envio cep")) ||
     "Vou verificar essa informação com o responsável 🐶";
 
   await sock.sendMessage(telefone, { text: resposta });
@@ -707,7 +707,7 @@ if (textoLower === "3") {
 
 if (textoLower === "4") {
   const resposta =
-    (await buscarInfoPorCategoria("acompanha")) ||
+    (await buscarRespostaExata("acompanha vacina pedigree contrato garantia")) ||
     "Vou verificar essa informação com o responsável 🐶";
 
   await sock.sendMessage(telefone, { text: resposta });
@@ -717,7 +717,7 @@ if (textoLower === "4") {
 
 if (textoLower === "5") {
   const resposta =
-    (await buscarInfoPorCategoria("reservas")) ||
+    (await buscarRespostaExata("reserva reservar disponibilidade sinal")) ||
     "Vou verificar essa informação com o responsável 🐶";
 
   await sock.sendMessage(telefone, { text: resposta });

@@ -542,9 +542,17 @@ if (connection === "close") {
       if (!clientesApresentados.has(telefone)) {
         clientesApresentados.add(telefone);
 
-        const respostaBoasVindas = `Olá, bem-vindo ao Canil Morvians Bull 🐶
+const respostaBoasVindas = `Olá, seja bem-vindo ao Canil Morvians Bull 🐶💙
 
-Sou a assistente virtual do canil e posso te ajudar com informações sobre Bulldogs Franceses, disponibilidade, fotos, valores e reservas 😊`;
+Sou a assistente virtual do canil e posso te ajudar com informações sobre nossos filhotes de Bulldog Francês 😊
+
+📋 Menu rápido:
+
+1️⃣ Ver filhotes disponíveis
+2️⃣ Formas de pagamento
+3️⃣ Entrega e regiões atendidas
+4️⃣ O que acompanha o filhote
+5️⃣ Reservas e disponibilidade`;
 
         await sock.sendMessage(telefone, { text: respostaBoasVindas });
         await salvarMensagem(telefone, respostaBoasVindas, "enviada");

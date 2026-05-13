@@ -555,13 +555,22 @@ async function responderOpcaoMenu(sock: any, telefone: string, opcao: string) {
 
       await enviarTexto(sock, telefone, resposta);
     },
-    "5": async () => {
-      await pausarIAParaHumano(sock, telefone);
-    },
-  };
+"5": async () => {
+  const resposta =
+    (await buscarInfoPorCategoria("reservas")) ||
+    (await buscarRespostaExata(
+      "reserva reservar disponibilidade sinal entrada reserva guardar filhote"
+    )) ||
+    "Vou verificar essa informação com o responsável 🐶";
 
-  const acao = opcoes[opcao];
-  if (acao) await acao();
+  await enviarTexto(sock, telefone, resposta);
+
+  await pausarIAParaHumano(sock, telefone);
+},
+};
+
+const acao = opcoes[opcao];
+if (acao) await acao();
 }
 
 async function pausarIAParaHumano(sock: any, telefone: string) {

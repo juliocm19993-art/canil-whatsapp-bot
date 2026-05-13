@@ -211,6 +211,8 @@ function pediuMenu(texto: string) {
   const t = texto.toLowerCase().trim();
 
   return (
+    t === "menu" ||
+    t === "menu geral" ||    
     t.includes("mais info") ||
     t.includes("mais informações") ||
     t.includes("mais informacoes") ||

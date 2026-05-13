@@ -572,6 +572,60 @@ ENVIE EXATAMENTE O TEXTO ORIGINAL.
   }
 }
 
+async function buscarRespostaExata(texto: string) {
+  const textoLower = texto.toLowerCase().trim();
+
+  const { data, error } = await supabase
+    .from("informacoes_canil")
+    .select("*")
+    .eq("ativo", true);
+
+  if (error || !data || data.length === 0) {
+    return null;
+  }
+
+  async function buscarInfoPorCategoria(categoria: string) {
+  const { data, error } = await supabase
+    .from("informacoes_canil")
+    .select("conteudo")
+    .eq("ativo", true)
+    .ilike("categoria", categoria)
+    .limit(1);
+
+  if (error || !data || data.length === 0) {
+    return "";
+  }
+
+  return data[0].conteudo;
+}
+
+  for (const info of data) {
+    const titulo = info.titulo?.toLowerCase() || "";
+    const categoria = info.categoria?.toLowerCase() || "";
+    const conteudo = info.conteudo || "";
+
+    const palavras = [
+      titulo,
+      categoria,
+    ];
+
+    const encontrou = palavras.some((p) => {
+      if (!p) return false;
+
+      return (
+        textoLower.includes(p) ||
+        p.includes(textoLower)
+      );
+    });
+
+    if (encontrou) {
+      return conteudo;
+    }
+  }
+
+  return null;
+}
+
 async function buscarInfoPorCategoria(categoria: string) {
   const { data, error } = await supabase
     .from("informacoes_canil")
@@ -889,18 +943,41 @@ if (textoLower === "5") {
         return;
       }
 
-      const historico = await buscarHistoricoCliente(telefone);
+const respostaBanco = await buscarRespostaExata(texto);
 
+if (respostaBanco) {
+  await sock.sendMessage(telefone, {
+    text: respostaBanco,
+  });
 
-      
-      const resposta = await gerarRespostaIA(
-        historico + "\nCliente: " + texto
-      );
+  await salvarMensagem(
+    telefone,
+    respostaBanco,
+    "enviada"
+  );
 
-      await sock.sendMessage(telefone, { text: resposta });
-      await salvarMensagem(telefone, resposta, "enviada");
+  console.log("Resposta enviada diretamente do banco!");
 
-      console.log("Resposta enviada!");
+  return;
+}
+
+const historico = await buscarHistoricoCliente(telefone);
+
+const resposta = await gerarRespostaIA(
+  historico + "\nCliente: " + texto
+);
+
+await sock.sendMessage(telefone, {
+  text: resposta,
+});
+
+await salvarMensagem(
+  telefone,
+  resposta,
+  "enviada"
+);
+
+console.log("Resposta IA enviada!");
     } catch (error) {
       console.log("Erro geral:", error);
     }

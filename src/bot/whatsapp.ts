@@ -138,7 +138,7 @@ if (filhotesComMidia.length === 0) {
 ${filhote.cor ? `🎨 Cor: ${filhote.cor}` : ""}
 ${filhote.sexo ? `🚹 Sexo: ${filhote.sexo}` : ""}
 ${filhote.valor ? `💰 Valor: R$ ${filhote.valor}` : ""}
-${filhote.data_disponivel ? `📅 Disponível em: ${filhote.data_disponivel}` : ""}
+📅 Disponível em: ${filhote.data_disponivel ? new Date(filhote.data_disponivel).toLocaleDateString("pt-BR") : "Consulte"}
 
 Quer saber mais sobre esse filhote ou fazer uma reserva? 😊`;
 

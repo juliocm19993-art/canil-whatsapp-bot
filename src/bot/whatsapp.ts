@@ -415,9 +415,12 @@ async function buscarRespostaExata(texto: string) {
       return textoLower.includes(palavra);
     });
 
-    if (encontrou) {
-      return info.conteudo;
-    }
+if (encontrou) {
+  console.log("INFO ENCONTRADA:", info);
+  console.log("CONTEUDO:", info.conteudo);
+
+  return info.conteudo;
+}
   }
 
   return null;

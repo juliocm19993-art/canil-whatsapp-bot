@@ -8,8 +8,82 @@ import { supabase } from "../lib/supabase";
 import http from "http";
 
 const logger = pino({ level: "silent" });
-const clientesApresentados = new Set<string>();
-const atendimentoHumano = new Set<string>();
+
+const cooldownUsuarios = new Map<string, number>();
+const processandoMensagem = new Set<string>();
+
+const COOLDOWN_MS = 2500;
+const PORT = process.env.PORT || 3001;
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizarTexto(texto: string) {
+  return String(texto || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w\s,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function formatarValor(valor: any) {
+  if (valor === null || valor === undefined || valor === "") return "";
+
+  const numero = Number(valor);
+
+  if (Number.isNaN(numero)) {
+    return String(valor);
+  }
+
+  return numero.toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
+}
+
+function dataBR(data: string) {
+  if (!data) return "Consulte";
+
+  try {
+    return new Date(data).toLocaleDateString("pt-BR");
+  } catch {
+    return data;
+  }
+}
+
+function primeiraLetraMaiuscula(texto: string) {
+  if (!texto) return texto;
+  return texto.charAt(0).toUpperCase() + texto.slice(1);
+}
+
+function obterTextoMensagem(msg: any) {
+  return (
+    msg.message?.conversation ||
+    msg.message?.extendedTextMessage?.text ||
+    msg.message?.imageMessage?.caption ||
+    msg.message?.videoMessage?.caption ||
+    ""
+  ).trim();
+}
+
+async function marcarDigitando(sock: any, telefone: string, tempo = 900) {
+  try {
+    await sock.sendPresenceUpdate("composing", telefone);
+    await delay(tempo);
+    await sock.sendPresenceUpdate("paused", telefone);
+  } catch {
+    // Não trava o bot caso o WhatsApp não aceite presence update.
+  }
+}
+
+async function enviarTexto(sock: any, telefone: string, texto: string) {
+  await marcarDigitando(sock, telefone);
+  await sock.sendMessage(telefone, { text: texto });
+  await salvarMensagem(telefone, texto, "enviada");
+}
 
 async function salvarCliente(telefone: string) {
   const { error } = await supabase.from("clientes").upsert(
@@ -17,17 +91,43 @@ async function salvarCliente(telefone: string) {
       telefone,
       atualizado_em: new Date().toISOString(),
     },
-    { onConflict: "telefone" }
+    { onConflict: "telefone" },
   );
 
   if (error) console.log("Erro ao salvar cliente:", error.message);
-  else console.log("Cliente salvo no Supabase:", telefone);
+}
+
+async function buscarCliente(telefone: string) {
+  const { data, error } = await supabase
+    .from("clientes")
+    .select("telefone, boas_vindas_enviada, atendimento_humano")
+    .eq("telefone", telefone)
+    .maybeSingle();
+
+  if (error) {
+    console.log("Erro ao buscar cliente:", error.message);
+    return null;
+  }
+
+  return data;
+}
+
+async function atualizarCliente(telefone: string, campos: Record<string, any>) {
+  const { error } = await supabase
+    .from("clientes")
+    .update({
+      ...campos,
+      atualizado_em: new Date().toISOString(),
+    })
+    .eq("telefone", telefone);
+
+  if (error) console.log("Erro ao atualizar cliente:", error.message);
 }
 
 async function salvarMensagem(
   telefone: string,
   mensagem: string,
-  direcao: string
+  direcao: "recebida" | "enviada",
 ) {
   const { error } = await supabase.from("mensagens").insert({
     telefone,
@@ -36,52 +136,93 @@ async function salvarMensagem(
   });
 
   if (error) console.log("Erro ao salvar mensagem:", error.message);
-  else console.log("Mensagem salva no Supabase:", direcao);
 }
 
-async function buscarInformacoesCanil() {
+async function buscarHistoricoCliente(telefone: string) {
+  const { data, error } = await supabase
+    .from("mensagens")
+    .select("mensagem,direcao,criado_em")
+    .eq("telefone", telefone)
+    .order("criado_em", { ascending: false })
+    .limit(8);
+
+  if (error || !data) return "";
+
+  return data
+    .reverse()
+    .map(
+      (m) =>
+        `${m.direcao === "recebida" ? "Cliente" : "Assistente"}: ${m.mensagem}`,
+    )
+    .join("\n");
+}
+
+async function buscarInfoPorCategoria(categoria: string) {
   const { data, error } = await supabase
     .from("informacoes_canil")
-    .select("titulo,categoria,conteudo")
+    .select("conteudo")
+    .eq("ativo", true)
+    .ilike("categoria", categoria)
+    .limit(1);
+
+  if (error || !data || data.length === 0) return "";
+
+  return data[0].conteudo || "";
+}
+
+async function buscarRespostaExata(texto: string) {
+  const textoNormalizado = normalizarTexto(texto);
+
+  const { data, error } = await supabase
+    .from("informacoes_canil")
+    .select("titulo,categoria,palavras_chave,conteudo")
     .eq("ativo", true);
 
   if (error || !data || data.length === 0) {
-    return "";
+    console.log("Nenhuma informação encontrada:", error?.message);
+    return null;
   }
 
-  return data.map((info) => info.conteudo).join("\n\n");
-}
+  let melhorResposta: string | null = null;
+  let maiorPontuacao = 0;
 
-async function buscarFilhotesDisponiveis() {
-  const { data, error } = await supabase
-    .from("filhotes_catalogo")
-    .select("*")
-    .eq("status", "disponivel")
-    .order("criado_em", { ascending: false });
+  for (const info of data) {
+    const palavrasChave = String(info.palavras_chave || "")
+      .split(",")
+      .map((p) => normalizarTexto(p))
+      .filter(Boolean);
 
-  if (error) {
-    console.log("Erro ao buscar filhotes:", error.message);
-    return "";
+    const categoria = normalizarTexto(info.categoria || "");
+    const titulo = normalizarTexto(info.titulo || "");
+    const palavras = [...palavrasChave, categoria, titulo].filter(Boolean);
+
+    let pontuacao = 0;
+
+    for (const palavra of palavras) {
+      if (!palavra) continue;
+
+      if (textoNormalizado === palavra) pontuacao += 5;
+      else if (textoNormalizado.includes(palavra)) pontuacao += 3;
+      else if (
+        palavra.includes(textoNormalizado) &&
+        textoNormalizado.length >= 4
+      )
+        pontuacao += 1;
+    }
+
+    if (pontuacao > maiorPontuacao) {
+      maiorPontuacao = pontuacao;
+      melhorResposta = info.conteudo || null;
+    }
   }
 
-  if (!data || data.length === 0) {
-    return "";
+  if (melhorResposta) {
+    console.log("Resposta encontrada no banco. Pontuação:", maiorPontuacao);
+    return melhorResposta;
   }
 
-  return data
-    .map((f) => {
-      const linhas = [];
-
-      linhas.push(`🐶 Nome: ${f.nome || "Filhote disponível"}`);
-      if (f.cor) linhas.push(`🎨 Cor: ${f.cor}`);
-      if (f.sexo) linhas.push(`🚹 Sexo: ${f.sexo}`);
-      if (f.valor) linhas.push(`💰 Valor: R$ ${f.valor}`);
-      if (f.data_disponivel)
-        linhas.push(`📅 Disponível em: ${f.data_disponivel}`);
-
-      return linhas.join("\n");
-    })
-    .join("\n\n");
+  console.log("Nenhuma palavra-chave bateu com:", textoNormalizado);
+  return null;
 }
 
 async function buscarFilhotesComMidia() {
@@ -102,49 +243,63 @@ async function buscarFilhotesComMidia() {
 async function enviarMidiasFilhotes(sock: any, telefone: string) {
   const filhotes = await buscarFilhotesComMidia();
 
-  const filhotesComMidia = filhotes.filter((filhote) => {
-    const fotos = filhote.fotos?.length
-      ? filhote.fotos
-      : filhote.foto_url
-      ? [filhote.foto_url]
-      : [];
+  const filhotesComMidia = filhotes.filter((filhote: any) => {
+    const fotos =
+      Array.isArray(filhote.fotos) && filhote.fotos.length
+        ? filhote.fotos
+        : filhote.foto_url
+          ? [filhote.foto_url]
+          : [];
 
-    const videos = filhote.videos?.length ? filhote.videos : [];
+    const videos =
+      Array.isArray(filhote.videos) && filhote.videos.length
+        ? filhote.videos
+        : [];
 
     return fotos.length > 0 || videos.length > 0;
   });
 
-if (filhotesComMidia.length === 0) {
-  const resposta =
-    (await buscarInfoPorCategoria("filhotes")) ||
-    (await buscarInfoPorCategoria("reservas")) ||
-    "Vou verificar essa informação com o responsável 🐶";
+  if (filhotesComMidia.length === 0) {
+    const resposta =
+      (await buscarInfoPorCategoria("filhotes")) ||
+      (await buscarInfoPorCategoria("reservas")) ||
+      "No momento vou confirmar a disponibilidade dos filhotes com o responsável do canil 🐶";
 
-  await sock.sendMessage(telefone, { text: resposta });
-  await salvarMensagem(telefone, resposta, "enviada");
-  return;
-}
+    await enviarTexto(sock, telefone, resposta);
+    return;
+  }
+
+  await enviarTexto(
+    sock,
+    telefone,
+    "Claro 😊🐶 Vou te mostrar os filhotes disponíveis no momento.",
+  );
 
   for (const filhote of filhotesComMidia) {
-    const fotos = filhote.fotos?.length
-      ? filhote.fotos
-      : filhote.foto_url
-      ? [filhote.foto_url]
-      : [];
+    const fotos =
+      Array.isArray(filhote.fotos) && filhote.fotos.length
+        ? filhote.fotos
+        : filhote.foto_url
+          ? [filhote.foto_url]
+          : [];
 
-    const videos = filhote.videos?.length ? filhote.videos : [];
+    const videos =
+      Array.isArray(filhote.videos) && filhote.videos.length
+        ? filhote.videos
+        : [];
 
     const legenda = `🐶 ${filhote.nome || "Filhote disponível"}
 ${filhote.cor ? `🎨 Cor: ${filhote.cor}` : ""}
-${filhote.sexo ? `🚹 Sexo: ${filhote.sexo}` : ""}
-${filhote.valor ? `💰 Valor: R$ ${filhote.valor}` : ""}
-📅 Disponível em: ${filhote.data_disponivel ? new Date(filhote.data_disponivel).toLocaleDateString("pt-BR") : "Consulte"}
+${filhote.sexo ? `🚻 Sexo: ${primeiraLetraMaiuscula(filhote.sexo)}` : ""}
+${filhote.valor ? `💰 Valor: ${formatarValor(filhote.valor)}` : ""}
+📅 Disponível em: ${filhote.data_disponivel ? dataBR(filhote.data_disponivel) : "Consulte"}
 
-Quer saber mais sobre esse filhote ou fazer uma reserva? 😊`;
+Quer saber mais sobre esse filhote ou fazer uma reserva? 😊`.trim();
 
     let primeiraMidia = true;
 
     for (const video of videos) {
+      await marcarDigitando(sock, telefone, 500);
       await sock.sendMessage(telefone, {
         video: { url: video },
         caption: primeiraMidia ? legenda : undefined,
@@ -152,9 +307,11 @@ Quer saber mais sobre esse filhote ou fazer uma reserva? 😊`;
 
       primeiraMidia = false;
       await salvarMensagem(telefone, `Vídeo enviado: ${video}`, "enviada");
+      await delay(700);
     }
 
     for (const foto of fotos) {
+      await marcarDigitando(sock, telefone, 500);
       await sock.sendMessage(telefone, {
         image: { url: foto },
         caption: primeiraMidia ? legenda : undefined,
@@ -162,113 +319,132 @@ Quer saber mais sobre esse filhote ou fazer uma reserva? 😊`;
 
       primeiraMidia = false;
       await salvarMensagem(telefone, `Foto enviada: ${foto}`, "enviada");
+      await delay(700);
     }
   }
-
-  console.log("Fotos/vídeos enviados!");
 }
 
-async function buscarHistoricoCliente(telefone: string) {
-  const { data, error } = await supabase
-    .from("mensagens")
-    .select("*")
-    .eq("telefone", telefone)
-    .order("criado_em", { ascending: false })
-    .limit(10);
+function mensagemBoasVindas() {
+  return `Olá, seja bem-vindo ao Canil Morvians Bull 🐶💙
 
-  if (error || !data) return "";
+Sou a assistente virtual do canil e posso te ajudar com informações sobre nossos filhotes de Bulldog Francês 😊
 
-  return data
-    .reverse()
-    .map((m) => {
-      return `${m.direcao === "recebida" ? "Cliente" : "Atendente"}: ${
-        m.mensagem
-      }`;
-    })
-    .join("\n");
+📋 Menu rápido:
+
+1️⃣ Ver filhotes disponíveis
+2️⃣ Formas de pagamento
+3️⃣ Entrega e regiões atendidas
+4️⃣ O que acompanha o filhote
+5️⃣ Reservas e disponibilidade
+
+Você pode responder com o número da opção ou escrever sua dúvida.`;
 }
 
-function querComprarOuReservar(texto: string) {
-  const t = texto.toLowerCase().trim();
+function mensagemTransferenciaHumana() {
+  return `Perfeito 😊🐶
 
-  return (
-    t.includes("quero reservar") ||
-    t.includes("reserva") ||
-    t.includes("quero comprar") ||
-    t.includes("tenho interesse") ||
-    t.includes("quero fechar") ||
-    t.includes("como comprar") ||
-    t.includes("como reservar") ||
-    t.includes("faz desconto") ||
-    t.includes("tem desconto") ||
-    t.includes("desconto") ||
-    t.includes("valor negociável") ||
-    t.includes("valor negociavel")
-  );
+Agora vou encaminhar seu atendimento para o responsável do canil 👨‍💼
+
+Ele irá conversar com você sobre:
+
+• reserva
+• valores
+• formas de pagamento
+• entrega
+• disponibilidade
+
+🤖 Atendimento automático pausado.
+⏳ Aguarde só um instante, será um prazer atender você!`;
 }
 
 function pediuMenu(texto: string) {
-  const t = texto.toLowerCase().trim();
+  const t = normalizarTexto(texto);
 
-  return (
-    t === "menu" ||
-    t === "menu geral" ||    
-    t.includes("mais info") ||
-    t.includes("mais informações") ||
-    t.includes("mais informacoes") ||
-    t.includes("infos") ||
-    t === "info" ||
-    t === "informação" ||
-    t === "informações" ||
-    t === "informacao" ||
-    t === "informacoes" ||
-    t.includes("quero saber mais")
-  );
+  return [
+    "menu",
+    "menu geral",
+    "mais info",
+    "mais informacoes",
+    "informacao",
+    "informacoes",
+    "quero saber mais",
+    "opcoes",
+    "opcoes do menu",
+  ].some((g) => t === g || t.includes(g));
 }
 
 function pediuHumano(texto: string) {
-  const t = texto.toLowerCase().trim();
+  const t = normalizarTexto(texto);
 
-  return (
-    t.includes("falar com uma pessoa") ||
-    t.includes("falar com atendente") ||
-    t.includes("falar com alguém") ||
-    t.includes("falar com alguem") ||
-    t.includes("responsável") ||
-    t.includes("responsavel") ||
-    t.includes("humano") ||
-    t.includes("criador")
-  );
+  const gatilhos = [
+    "falar com uma pessoa",
+    "falar com atendente",
+    "falar com alguem",
+    "quero atendimento",
+    "atendimento humano",
+    "humano",
+    "responsavel",
+    "criador",
+    "vendedor",
+    "pessoa real",
+  ];
+
+  return gatilhos.some((g) => t.includes(g));
+}
+
+function querComprarOuReservar(texto: string) {
+  const t = normalizarTexto(texto);
+
+  const gatilhos = [
+    "quero reservar",
+    "reserva",
+    "reservar",
+    "quero comprar",
+    "comprar",
+    "tenho interesse",
+    "quero fechar",
+    "fechar negocio",
+    "como comprar",
+    "como reservar",
+    "faz desconto",
+    "tem desconto",
+    "desconto",
+    "valor negociavel",
+    "sinal",
+  ];
+
+  return gatilhos.some((g) => t.includes(g));
 }
 
 function pediuMidiaOuFilhote(texto: string) {
-  const t = texto.toLowerCase().trim();
+  const t = normalizarTexto(texto);
 
   const gatilhos = [
     "filhotes",
     "filhote",
+    "disponivel",
+    "disponiveis",
     "tem macho",
-    "tem fêmea",
     "tem femea",
     "quero ver",
     "ver fotos",
     "ver foto",
-    "ver vídeos",
     "ver videos",
     "me mostra",
     "mostrar filhote",
     "mostrar filhotes",
     "manda foto",
     "envia foto",
-    "manda vídeo",
     "manda video",
+    "video",
+    "foto",
   ];
 
   return gatilhos.some((g) => t.includes(g));
 }
 
 function ehElogio(texto: string) {
-  const t = texto.toLowerCase().trim();
+  const t = normalizarTexto(texto);
 
   const elogios = [
     "lindo",
@@ -287,28 +463,118 @@ function ehElogio(texto: string) {
   return elogios.some((e) => t.includes(e));
 }
 
-function ehMensagemCurtaConfusa(texto: string) {
-  const t = texto.toLowerCase().trim();
-  return t === "?" || t === "??" || t === "???" || t === "sim" || t === "ok";
+function ehMensagemSimples(texto: string) {
+  const t = normalizarTexto(texto);
+
+  return [
+    "ok",
+    "oi",
+    "ola",
+    "bom dia",
+    "boa tarde",
+    "boa noite",
+    "kkk",
+    "show",
+    "top",
+    "legal",
+    "aguardo",
+    "valeu",
+    "obrigado",
+    "obg",
+    "sim",
+    "nao",
+    "?",
+  ].includes(t);
+}
+
+function respostaMensagemSimples(texto: string) {
+  const t = normalizarTexto(texto);
+
+  if (["oi", "ola", "bom dia", "boa tarde", "boa noite"].includes(t)) {
+    return "Olá 😊 Como posso te ajudar?\n\nDigite *menu* para ver as opções.";
+  }
+
+  if (["obrigado", "obg", "valeu"].includes(t)) {
+    return "Eu que agradeço 😊🐶";
+  }
+
+  if (t === "aguardo") {
+    return "Perfeito 😊 O responsável irá te chamar assim que possível.";
+  }
+
+  if (["sim", "ok", "show", "top", "legal", "kkk"].includes(t)) {
+    return "😊 Posso te ajudar com filhotes, valores, entrega, formas de pagamento ou reservas.";
+  }
+
+  if (t === "nao") {
+    return "Tudo bem 😊 Caso precise, é só me chamar.";
+  }
+
+  return "😊 Posso te ajudar com filhotes, valores, entrega, formas de pagamento ou reservas.";
 }
 
 async function responderMenu(sock: any, telefone: string) {
-  const resposta = `Claro 😊 Sobre o que você gostaria de saber?
+  await enviarTexto(sock, telefone, mensagemBoasVindas());
+}
 
-1️⃣ Filhotes disponíveis
-2️⃣ O que acompanha o filhote
-3️⃣ Entrega
-4️⃣ Valores
-5️⃣ Reservas`;
+async function responderOpcaoMenu(sock: any, telefone: string, opcao: string) {
+  const opcoes: Record<string, () => Promise<void>> = {
+    "1": async () => {
+      await enviarMidiasFilhotes(sock, telefone);
+    },
+    "2": async () => {
+      const resposta =
+        (await buscarRespostaExata(
+          "formas de pagamento pagamento valores preço parcelamento pix cartao avista infinity pay",
+        )) ||
+        "Os valores e formas de pagamento serão confirmados pelo responsável do canil 🐶";
 
-  await sock.sendMessage(telefone, { text: resposta });
-  await salvarMensagem(telefone, resposta, "enviada");
+      await enviarTexto(sock, telefone, resposta);
+    },
+    "3": async () => {
+      const resposta =
+        (await buscarRespostaExata(
+          "entrega frete envio cep regioes atendidas transporte",
+        )) ||
+        "Realizamos entregas conforme a região. Envie seu CEP para o responsável calcular certinho para você 📍";
+
+      await enviarTexto(sock, telefone, resposta);
+    },
+    "4": async () => {
+      const resposta =
+        (await buscarRespostaExata(
+          "acompanha vacina vacinado vermifugado pedigree contrato garantia giardia",
+        )) ||
+        `Nossos filhotes acompanham:
+
+💉 Vacinação conforme a idade
+💊 Vermifugação, inclusive Giárdia
+📄 Contrato de compra e venda
+✅ Garantia de saúde contra viroses e verminoses
+🎖️ Pedigree opcional`;
+
+      await enviarTexto(sock, telefone, resposta);
+    },
+    "5": async () => {
+      await pausarIAParaHumano(sock, telefone);
+    },
+  };
+
+  const acao = opcoes[opcao];
+  if (acao) await acao();
+}
+
+async function pausarIAParaHumano(sock: any, telefone: string) {
+  await atualizarCliente(telefone, { atendimento_humano: true });
+  await enviarTexto(sock, telefone, mensagemTransferenciaHumana());
 }
 
 async function gerarRespostaIA(texto: string) {
-
-
   try {
+    if (!process.env.GROQ_API_KEY) {
+      return "Vou verificar essa informação com o responsável 🐶";
+    }
+
     const response = await fetch(
       "https://api.groq.com/openai/v1/chat/completions",
       {
@@ -320,37 +586,31 @@ async function gerarRespostaIA(texto: string) {
         body: JSON.stringify({
           model: "llama-3.3-70b-versatile",
           temperature: 0.2,
+          max_tokens: 180,
           messages: [
             {
               role: "system",
-              content: `
+              content: `Você é a assistente virtual do Canil Morvians Bull.
 
-Você é a assistente virtual do Canil Morvians Bull.
-
-Responda somente conversas simples e naturais.
-
-NÃO use informações do banco.
-NÃO fale sobre valores.
-NÃO fale sobre entrega.
-NÃO fale sobre filhotes.
-NÃO fale sobre reserva.
-NÃO fale sobre pedigree.
-NÃO invente informações.
-
-Se o cliente perguntar algo específico do canil e a resposta não foi encontrada antes pelo sistema, responda exatamente:
-
-"Vou verificar essa informação com o responsável 🐶"
-
-Para conversa comum, responda curto e natural.
+Regras obrigatórias:
+- Responda sempre em português do Brasil.
+- Seja educada, curta, natural e profissional.
+- Use poucos emojis.
+- Não invente informações.
+- Não informe valores, formas de pagamento, entrega, reserva, disponibilidade, pedigree ou saúde se a informação não estiver no texto enviado pelo sistema.
+- Se o cliente pedir compra, reserva, desconto, negociação ou atendimento humano, responda exatamente: HUMANO_NECESSARIO
+- Se a pergunta for específica do canil e você não tiver certeza, responda exatamente: Vou verificar essa informação com o responsável 🐶
+- Para conversa simples, responda de forma amigável.
 
 Exemplos:
-"bom dia" → "Bom dia 😊 Como posso te ajudar?"
-"tudo bem" → "Tudo bem sim 😊 Como posso te ajudar?"
-"obrigado" → "Eu que agradeço 😊"
-"legal" → "Que bom 😊"
+Cliente: bom dia
+Resposta: Bom dia 😊 Como posso te ajudar?
 
+Cliente: obrigado
+Resposta: Eu que agradeço 😊
 
-`,
+Cliente: quero reservar
+Resposta: HUMANO_NECESSARIO`,
             },
             {
               role: "user",
@@ -358,84 +618,165 @@ Exemplos:
             },
           ],
         }),
-      }
+      },
     );
 
     const data = await response.json();
     const resposta = data?.choices?.[0]?.message?.content?.trim();
 
-    return resposta || "Claro 🐶 Vou verificar essa informação para você.";
+    return resposta || "Vou verificar essa informação com o responsável 🐶";
   } catch (error) {
     console.log("Erro IA:", error);
-    return "Desculpe 🐶 Tive um probleminha aqui. Vou pedir para o responsável verificar.";
+    return "Vou verificar essa informação com o responsável 🐶";
   }
 }
 
-function normalizarTexto(texto: string) {
-  return String(texto || "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^\w\s,]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+async function tratarComandoAtendente(
+  sock: any,
+  msg: any,
+  telefone: string,
+  texto: string,
+) {
+  const comando = normalizarTexto(texto);
+
+  if (comando === "/ia on" || comando === "ia on") {
+    await atualizarCliente(telefone, { atendimento_humano: false });
+
+    try {
+      await sock.sendMessage(telefone, { delete: msg.key });
+    } catch {}
+
+    console.log("IA reativada para:", telefone);
+    return true;
+  }
+
+  if (comando === "/ia off" || comando === "ia off") {
+    await atualizarCliente(telefone, { atendimento_humano: true });
+
+    try {
+      await sock.sendMessage(telefone, { delete: msg.key });
+    } catch {}
+
+    console.log("IA pausada para:", telefone);
+    return true;
+  }
+
+  return false;
 }
 
-async function buscarRespostaExata(texto: string) {
+async function processarMensagem(sock: any, msg: any) {
+  const telefone = msg.key.remoteJid;
+  if (!telefone) return;
+
+  if (telefone.includes("@g.us")) return;
+  if (msg.key.remoteJid === "status@broadcast") return;
+
+  const texto = obterTextoMensagem(msg);
   const textoNormalizado = normalizarTexto(texto);
 
-  const { data, error } = await supabase
-    .from("informacoes_canil")
-    .select("titulo,categoria,palavras_chave,conteudo")
-    .eq("ativo", true);
-
-  if (error || !data || data.length === 0) {
-    console.log("Nenhuma informação encontrada:", error?.message);
-    return null;
+  if (msg.key.fromMe) {
+    await tratarComandoAtendente(sock, msg, telefone, texto);
+    return;
   }
 
-  for (const info of data) {
-    const palavrasChave = String(info.palavras_chave || "")
-      .split(",")
-      .map((p) => normalizarTexto(p))
-      .filter(Boolean);
+  if (!texto && msg.message?.audioMessage) {
+    await enviarTexto(
+      sock,
+      telefone,
+      "🎤 No momento não consigo ouvir áudios. Pode enviar sua dúvida por texto? 😊",
+    );
+    return;
+  }
 
-    const categoria = normalizarTexto(info.categoria || "");
-    const titulo = normalizarTexto(info.titulo || "");
+  if (!texto) return;
 
-    const palavras = [
-      ...palavrasChave,
-      categoria,
-      titulo,
-    ].filter(Boolean);
+  const chaveProcessamento = `${telefone}:${textoNormalizado}`;
+  if (processandoMensagem.has(chaveProcessamento)) return;
 
-    const encontrou = palavras.some((palavra) => {
-      return textoNormalizado.includes(palavra);
-    });
+  const agora = Date.now();
+  const ultimoAtendimento = cooldownUsuarios.get(telefone) || 0;
 
-    if (encontrou) {
-      console.log("Resposta encontrada no banco:", info.titulo);
-      return info.conteudo || null;
+  if (agora - ultimoAtendimento < COOLDOWN_MS) {
+    console.log("Mensagem ignorada por cooldown:", telefone);
+    return;
+  }
+
+  cooldownUsuarios.set(telefone, agora);
+  processandoMensagem.add(chaveProcessamento);
+
+  try {
+    console.log("Mensagem recebida:", texto);
+
+    await salvarCliente(telefone);
+    await salvarMensagem(telefone, texto, "recebida");
+
+    let cliente = await buscarCliente(telefone);
+
+    if (!cliente?.boas_vindas_enviada) {
+      await enviarTexto(sock, telefone, mensagemBoasVindas());
+      await atualizarCliente(telefone, { boas_vindas_enviada: true });
+      console.log("Mensagem de boas-vindas enviada!");
+      return;
     }
+
+    if (cliente?.atendimento_humano) {
+      console.log("Atendimento humano ativo. IA não respondeu:", telefone);
+      return;
+    }
+
+    if (pediuHumano(texto) || querComprarOuReservar(texto)) {
+      await pausarIAParaHumano(sock, telefone);
+      return;
+    }
+
+    if (pediuMenu(texto)) {
+      await responderMenu(sock, telefone);
+      return;
+    }
+
+    if (["1", "2", "3", "4", "5"].includes(textoNormalizado)) {
+      await responderOpcaoMenu(sock, telefone, textoNormalizado);
+      return;
+    }
+
+    if (ehElogio(texto)) {
+      await enviarTexto(sock, telefone, "Ficamos felizes que gostou 😊🐶");
+      return;
+    }
+
+    if (ehMensagemSimples(texto)) {
+      await enviarTexto(sock, telefone, respostaMensagemSimples(texto));
+      return;
+    }
+
+    if (pediuMidiaOuFilhote(texto)) {
+      await enviarMidiasFilhotes(sock, telefone);
+      return;
+    }
+
+    const respostaBanco = await buscarRespostaExata(texto);
+
+    if (respostaBanco) {
+      await enviarTexto(sock, telefone, respostaBanco);
+      console.log("Resposta enviada diretamente do banco!");
+      return;
+    }
+
+    const historico = await buscarHistoricoCliente(telefone);
+    const respostaIA = await gerarRespostaIA(`${historico}\nCliente: ${texto}`);
+
+    if (respostaIA === "HUMANO_NECESSARIO") {
+      await pausarIAParaHumano(sock, telefone);
+      return;
+    }
+
+    await enviarTexto(sock, telefone, respostaIA);
+    console.log("Resposta IA enviada!");
+  } catch (error) {
+    console.log("Erro geral ao processar mensagem:", error);
+  } finally {
+    processandoMensagem.delete(chaveProcessamento);
   }
-
-  console.log("Nenhuma palavra-chave bateu com:", textoNormalizado);
-  return null;
-}
-
-async function buscarInfoPorCategoria(categoria: string) {
-  const { data, error } = await supabase
-    .from("informacoes_canil")
-    .select("conteudo")
-    .eq("ativo", true)
-    .ilike("categoria", categoria)
-    .limit(1);
-
-  if (error || !data || data.length === 0) {
-    return "";
-  }
-
-  return data[0].conteudo;
 }
 
 async function startBot() {
@@ -443,353 +784,51 @@ async function startBot() {
 
   const { state, saveCreds } = await useMultiFileAuthState("auth_info");
 
-const sock = makeWASocket({
-  auth: state,
-  logger,
-  printQRInTerminal: true,
-  browser: ["Chrome", "Windows", "120.0.0"],
-  version: [2, 3000, 1034074495],
-  syncFullHistory: false,
-  markOnlineOnConnect: false,
-});
+  const sock = makeWASocket({
+    auth: state,
+    logger,
+    printQRInTerminal: true,
+    browser: ["Chrome", "Windows", "120.0.0"],
+    syncFullHistory: false,
+    markOnlineOnConnect: false,
+  });
 
   sock.ev.on("creds.update", saveCreds);
 
-sock.ev.on("connection.update", async (update) => {
-  const { connection, qr, lastDisconnect } = update;
+  sock.ev.on("connection.update", async (update) => {
+    const { connection, qr, lastDisconnect } = update;
 
-  if (qr) {
-    console.log("QR RECEBIDO");
+    if (qr) {
+      console.log("QR RECEBIDO");
+      qrcode.generate(qr, { small: true });
+    }
 
-    qrcode.generate(qr, {
-      small: true,
-    });
-  }
+    if (connection === "open") {
+      console.log("✅ WhatsApp conectado com sucesso!");
+    }
 
-  if (connection === "open") {
-    console.log("✅ WhatsApp conectado com sucesso!");
-  }
+    if (connection === "close") {
+      const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
+      console.log("❌ Conexão fechada. Código:", statusCode);
 
-if (connection === "close") {
-  const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
+      const deveReconectar = statusCode !== DisconnectReason.loggedOut;
 
-  console.log("❌ Conexão fechada. Código:", statusCode);
-
-  const deveReconectar =
-    statusCode !== DisconnectReason.loggedOut;
-
-  if (deveReconectar) {
-    console.log("🔄 Reconectando WhatsApp...");
-    startBot();
-  } else {
-    console.log("Sessão deslogada. Apague auth_info e escaneie novamente.");
-  }
-}
-});
+      if (deveReconectar) {
+        console.log("🔄 Reconectando WhatsApp...");
+        await delay(4000);
+        startBot();
+      } else {
+        console.log("Sessão deslogada. Apague auth_info e escaneie novamente.");
+      }
+    }
+  });
 
   sock.ev.on("messages.upsert", async ({ messages }) => {
-    try {
-      const msg = messages[0];
-
-      if (!msg.message) return;
-
-      const texto =
-        msg.message.conversation ||
-        msg.message.extendedTextMessage?.text ||
-        "";
-
-      const telefone = msg.key.remoteJid;
-      if (!telefone) return;
-
-      const textoLower = texto.toLowerCase().trim();
-
-      if (msg.key.fromMe) {
-        if (textoLower === "/ia on") {
-          atendimentoHumano.delete(telefone);
-
-          await sock.sendMessage(telefone, {
-            delete: msg.key,
-          });
-
-          console.log("IA reativada para:", telefone);
-        }
-
-        if (textoLower === "/ia off") {
-          atendimentoHumano.add(telefone);
-
-          await sock.sendMessage(telefone, {
-            delete: msg.key,
-          });
-
-          console.log("IA pausada para:", telefone);
-        }
-
-        return;
-      }
-
-      if (atendimentoHumano.has(telefone)) {
-        console.log("Atendimento humano ativo. IA não respondeu:", telefone);
-        return;
-      }
-
-      if (!texto) return;
-
-      console.log("Mensagem recebida:", texto);
-
-      await salvarCliente(telefone);
-      await salvarMensagem(telefone, texto, "recebida");
-
-      if (!clientesApresentados.has(telefone)) {
-        clientesApresentados.add(telefone);
-
-const respostaBoasVindas = `Olá, seja bem-vindo ao Canil Morvians Bull 🐶💙
-
-Sou a assistente virtual do canil e posso te ajudar com informações sobre nossos filhotes de Bulldog Francês 😊
-
-📋 Menu rápido:
-
-1️⃣ Ver filhotes disponíveis
-2️⃣ Formas de pagamento
-3️⃣ Entrega e regiões atendidas
-4️⃣ O que acompanha o filhote
-5️⃣ Reservas e disponibilidade`;
-
-        await sock.sendMessage(telefone, { text: respostaBoasVindas });
-        await salvarMensagem(telefone, respostaBoasVindas, "enviada");
-
-        console.log("Mensagem de boas-vindas enviada!");
-        return;
-      }
-if (querComprarOuReservar(texto)) {
-  atendimentoHumano.add(telefone);
-
-  const resposta = `Que ótimo 😊🐶
-
-Ficamos muito felizes com o seu interesse em nossos filhotes.
-
-Agora seu atendimento será encaminhado para o responsável do canil 👨‍💼
-
-Em instantes, ele irá entrar no char e tirar suas dividas.
-
-🤖 Atendimento automático finalizado.
-📞 Aguarde só um momento, será um prazer atender você.`;
-
-  await sock.sendMessage(telefone, {
-    text: resposta,
-  });
-
-  await salvarMensagem(telefone, resposta, "enviada");
-
-  return;
-}
-const mensagensSimples = [
-  "ok",
-  "oi",
-  "ola",
-  "olá",
-  "👍",
-  "?",
-  "kkk",
-  "show",
-  "top",
-  "legal",
-  "aguardo",
-  "valeu",
-  "obrigado",
-  "obg",
-  "sim",
-  "não",
-  "nao",
-];
-
-if (mensagensSimples.includes(textoLower)) {
-  let resposta = "😊";
-
-  if (textoLower === "aguardo") {
-    resposta = "Perfeito 😊";
-  }
-
-  if (
-    textoLower === "obrigado" ||
-    textoLower === "obg"
-  ) {
-    resposta = "Eu que agradeço 😊";
-  }
-
-  if (
-    textoLower === "oi" ||
-    textoLower === "ola" ||
-    textoLower === "olá"
-  ) {
-    resposta =
-      "Olá 😊 Como posso te ajudar?";
-  }
-
-  await sock.sendMessage(telefone, {
-    text: resposta,
-  });
-
-  await salvarMensagem(
-    telefone,
-    resposta,
-    "enviada"
-  );
-
-  return;
-}
-
-if (
-  textoLower.includes("falar com") ||
-  textoLower.includes("atendente") ||
-  textoLower.includes("humano") ||
-  textoLower.includes("responsável") ||
-  textoLower.includes("responsavel")
-) {
-  atendimentoHumano.add(telefone);
-
-  const resposta =
-    "Claro 😊 Em breve o responsável pelo canil irá te responder.";
-
-  await sock.sendMessage(telefone, {
-    text: resposta,
-  });
-
-  await salvarMensagem(
-    telefone,
-    resposta,
-    "enviada"
-  );
-
-  return;
-}
-
-      if (pediuHumano(texto)) {
-        atendimentoHumano.add(telefone);
-
-        const resposta =
-          "Claro 😊 Em breve o responsável pelo canil irá te responder.";
-
-        await sock.sendMessage(telefone, { text: resposta });
-        await salvarMensagem(telefone, resposta, "enviada");
-
-        return;
-      }
-
-      if (pediuMenu(texto)) {
-        await responderMenu(sock, telefone);
-        return;
-      }
-
-      if (textoLower === "1") {
-        await enviarMidiasFilhotes(sock, telefone);
-        return;
-      }
-
-if (textoLower === "2") {
-  const resposta =
-    (await buscarRespostaExata("valores pagamento preço parcelamento")) ||
-    "Vou verificar essa informação com o responsável 🐶";
-
-  await sock.sendMessage(telefone, { text: resposta });
-  await salvarMensagem(telefone, resposta, "enviada");
-  return;
-}
-
-if (textoLower === "3") {
-  const resposta =
-    (await buscarRespostaExata("entrega frete envio cep")) ||
-    "Vou verificar essa informação com o responsável 🐶";
-
-  await sock.sendMessage(telefone, { text: resposta });
-  await salvarMensagem(telefone, resposta, "enviada");
-  return;
-}
-
-if (textoLower === "4") {
-  const resposta =
-    (await buscarRespostaExata("acompanha vacina pedigree contrato garantia")) ||
-    "Vou verificar essa informação com o responsável 🐶";
-
-  await sock.sendMessage(telefone, { text: resposta });
-  await salvarMensagem(telefone, resposta, "enviada");
-  return;
-}
-
-if (textoLower === "5") {
-  const resposta =
-    (await buscarRespostaExata("reserva reservar disponibilidade sinal")) ||
-    "Vou verificar essa informação com o responsável 🐶";
-
-  await sock.sendMessage(telefone, { text: resposta });
-  await salvarMensagem(telefone, resposta, "enviada");
-  return;
-}
-
-      if (ehElogio(texto)) {
-        const resposta = "Ficamos felizes que gostou 😊";
-
-        await sock.sendMessage(telefone, { text: resposta });
-        await salvarMensagem(telefone, resposta, "enviada");
-        return;
-      }
-
-      if (ehMensagemCurtaConfusa(texto)) {
-        const resposta =
-          "😊 Posso te ajudar com valores, entrega, reservas ou informações sobre os filhotes.";
-
-        await sock.sendMessage(telefone, { text: resposta });
-        await salvarMensagem(telefone, resposta, "enviada");
-        return;
-      }
-
-      if (pediuMidiaOuFilhote(texto)) {
-        console.log("Cliente perguntou sobre filhote/foto/vídeo!");
-        await enviarMidiasFilhotes(sock, telefone);
-        return;
-      }
-
-const respostaBanco = await buscarRespostaExata(texto);
-
-if (respostaBanco) {
-  await sock.sendMessage(telefone, {
-    text: respostaBanco,
-  });
-
-  await salvarMensagem(
-    telefone,
-    respostaBanco,
-    "enviada"
-  );
-
-  console.log("Resposta enviada diretamente do banco!");
-
-  return;
-}
-
-const historico = await buscarHistoricoCliente(telefone);
-
-const resposta = await gerarRespostaIA(
-  historico + "\nCliente: " + texto
-);
-
-await sock.sendMessage(telefone, {
-  text: resposta,
-});
-
-await salvarMensagem(
-  telefone,
-  resposta,
-  "enviada"
-);
-
-console.log("Resposta IA enviada!");
-    } catch (error) {
-      console.log("Erro geral:", error);
+    for (const msg of messages) {
+      await processarMensagem(sock, msg);
     }
   });
 }
-
-const PORT = process.env.PORT || 3001;
 
 http
   .createServer((req, res) => {

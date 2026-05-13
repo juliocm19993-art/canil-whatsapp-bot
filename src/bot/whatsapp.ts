@@ -726,23 +726,20 @@ async function processarMensagem(sock: any, msg: any) {
       return;
     }
 
-if (
-  textoNormalizado !== "5" &&
-  (pediuHumano(texto) || querComprarOuReservar(texto))
-) {
-  await pausarIAParaHumano(sock, telefone);
+if (pediuMenu(texto)) {
+  await responderMenu(sock, telefone);
   return;
 }
 
-    if (pediuMenu(texto)) {
-      await responderMenu(sock, telefone);
-      return;
-    }
+if (["1", "2", "3", "4", "5"].includes(textoNormalizado)) {
+  await responderOpcaoMenu(sock, telefone, textoNormalizado);
+  return;
+}
 
-    if (["1", "2", "3", "4", "5"].includes(textoNormalizado)) {
-      await responderOpcaoMenu(sock, telefone, textoNormalizado);
-      return;
-    }
+if (pediuHumano(texto) || querComprarOuReservar(texto)) {
+  await pausarIAParaHumano(sock, telefone);
+  return;
+}
 
     if (ehElogio(texto)) {
       await enviarTexto(sock, telefone, "Ficamos felizes que gostou 😊🐶");

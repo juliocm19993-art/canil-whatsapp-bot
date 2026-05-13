@@ -609,14 +609,17 @@ async function buscarRespostaExata(texto: string) {
       categoria,
     ];
 
-    const encontrou = palavras.some((p) => {
-      if (!p) return false;
+const encontrou = palavras.some((p) => {
+  if (!p) return false;
 
-      return (
-        textoLower.includes(p) ||
-        p.includes(textoLower)
-      );
-    });
+  const palavrasCliente = textoLower.split(" ");
+
+  return palavrasCliente.some(
+    (palavra) =>
+      palavra === p ||
+      p === palavra
+  );
+});
 
     if (encontrou) {
       return conteudo;

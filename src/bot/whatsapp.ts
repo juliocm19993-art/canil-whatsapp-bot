@@ -262,7 +262,7 @@ async function enviarMidiasFilhotes(sock: any, telefone: string) {
   if (filhotesComMidia.length === 0) {
     const resposta =
       (await buscarInfoPorCategoria("filhotes")) ||
-      (await buscarInfoPorCategoria("reservas")) ||
+      (await buscarRespostaExata("reserva")) ||
       "No momento vou confirmar a disponibilidade dos filhotes com o responsável do canil 🐶";
 
     await enviarTexto(sock, telefone, resposta);

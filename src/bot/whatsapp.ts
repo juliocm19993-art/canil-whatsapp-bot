@@ -812,7 +812,7 @@ console.log("Resposta IA enviada!");
       console.log("Erro geral:", error);
     }
   });
-}
+}w
 
 const PORT = process.env.PORT || 3001;
 

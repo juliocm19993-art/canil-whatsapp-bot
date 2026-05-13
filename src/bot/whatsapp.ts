@@ -607,9 +607,7 @@ Resposta: Bom dia 😊 Como posso te ajudar?
 
 Cliente: obrigado
 Resposta: Eu que agradeço 😊
-
-Cliente: quero reservar
-Resposta: HUMANO_NECESSARIO`,
+`,
             },
             {
               role: "user",

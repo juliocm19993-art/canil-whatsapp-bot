@@ -687,7 +687,7 @@ if (
 
 if (textoLower === "2") {
   const resposta =
-    (await buscarInfoPorCategoria("acompanha")) ||
+    (await buscarInfoPorCategoria("valores")) ||
     "Vou verificar essa informação com o responsável 🐶";
 
   await sock.sendMessage(telefone, { text: resposta });
@@ -707,7 +707,7 @@ if (textoLower === "3") {
 
 if (textoLower === "4") {
   const resposta =
-    (await buscarInfoPorCategoria("valores")) ||
+    (await buscarInfoPorCategoria("acompanha")) ||
     "Vou verificar essa informação com o responsável 🐶";
 
   await sock.sendMessage(telefone, { text: resposta });

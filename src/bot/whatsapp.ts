@@ -371,20 +371,18 @@ Exemplos:
   }
 }
 
-async function buscarRespostaExata(texto: string) {
-  const textoLower = texto.toLowerCase().trim();
-
-  const { data, error } = await supabase
-    .from("informacoes_canil")
-    .select("*")
-    .eq("ativo", true);
-
-  if (error || !data || data.length === 0) {
-    return null;
-  }
+function normalizarTexto(texto: string) {
+  return String(texto || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w\s,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 async function buscarRespostaExata(texto: string) {
-  const textoLower = texto.toLowerCase().trim();
+  const textoNormalizado = normalizarTexto(texto);
 
   const { data, error } = await supabase
     .from("informacoes_canil")
@@ -392,18 +390,18 @@ async function buscarRespostaExata(texto: string) {
     .eq("ativo", true);
 
   if (error || !data || data.length === 0) {
+    console.log("Nenhuma informação encontrada:", error?.message);
     return null;
   }
 
   for (const info of data) {
     const palavrasChave = String(info.palavras_chave || "")
-      .toLowerCase()
       .split(",")
-      .map((p) => p.trim())
+      .map((p) => normalizarTexto(p))
       .filter(Boolean);
 
-    const categoria = String(info.categoria || "").toLowerCase().trim();
-    const titulo = String(info.titulo || "").toLowerCase().trim();
+    const categoria = normalizarTexto(info.categoria || "");
+    const titulo = normalizarTexto(info.titulo || "");
 
     const palavras = [
       ...palavrasChave,
@@ -412,47 +410,16 @@ async function buscarRespostaExata(texto: string) {
     ].filter(Boolean);
 
     const encontrou = palavras.some((palavra) => {
-      return textoLower.includes(palavra);
+      return textoNormalizado.includes(palavra);
     });
 
-if (encontrou) {
-  console.log("INFO ENCONTRADA:", info);
-  console.log("CONTEUDO:", info.conteudo);
-
-  return info.conteudo;
-}
-  }
-
-  return null;
-}
-
-  for (const info of data) {
-    const titulo = info.titulo?.toLowerCase() || "";
-    const categoria = info.categoria?.toLowerCase() || "";
-    const conteudo = info.conteudo || "";
-
-    const palavras = [
-      titulo,
-      categoria,
-    ];
-
-const encontrou = palavras.some((p) => {
-  if (!p) return false;
-
-  const palavrasCliente = textoLower.split(" ");
-
-  return palavrasCliente.some(
-    (palavra) =>
-      palavra === p ||
-      p === palavra
-  );
-});
-
     if (encontrou) {
-      return conteudo;
+      console.log("Resposta encontrada no banco:", info.titulo);
+      return info.conteudo || null;
     }
   }
 
+  console.log("Nenhuma palavra-chave bateu com:", textoNormalizado);
   return null;
 }
 

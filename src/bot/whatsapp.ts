@@ -383,19 +383,44 @@ async function buscarRespostaExata(texto: string) {
     return null;
   }
 
-  async function buscarInfoPorCategoria(categoria: string) {
+async function buscarRespostaExata(texto: string) {
+  const textoLower = texto.toLowerCase().trim();
+
   const { data, error } = await supabase
     .from("informacoes_canil")
-    .select("conteudo")
-    .eq("ativo", true)
-    .ilike("categoria", categoria)
-    .limit(1);
+    .select("titulo,categoria,palavras_chave,conteudo")
+    .eq("ativo", true);
 
   if (error || !data || data.length === 0) {
-    return "";
+    return null;
   }
 
-  return data[0].conteudo;
+  for (const info of data) {
+    const palavrasChave = String(info.palavras_chave || "")
+      .toLowerCase()
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean);
+
+    const categoria = String(info.categoria || "").toLowerCase().trim();
+    const titulo = String(info.titulo || "").toLowerCase().trim();
+
+    const palavras = [
+      ...palavrasChave,
+      categoria,
+      titulo,
+    ].filter(Boolean);
+
+    const encontrou = palavras.some((palavra) => {
+      return textoLower.includes(palavra);
+    });
+
+    if (encontrou) {
+      return info.conteudo;
+    }
+  }
+
+  return null;
 }
 
   for (const info of data) {

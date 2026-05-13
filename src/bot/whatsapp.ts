@@ -347,12 +347,6 @@ Agora vou encaminhar seu atendimento para o responsável do canil 👨‍💼
 
 Ele irá conversar com você sobre:
 
-• reserva
-• valores
-• formas de pagamento
-• entrega
-• disponibilidade
-
 🤖 Atendimento automático pausado.
 ⏳ Aguarde só um instante, será um prazer atender você!`;
 }
@@ -402,7 +396,7 @@ function querComprarOuReservar(texto: string) {
     "quero fechar",
     "fechar negocio",
     "como comprar",
-    "como reservar",
+  
     "faz desconto",
     "tem desconto",
     "desconto",
@@ -500,14 +494,14 @@ function respostaMensagemSimples(texto: string) {
   }
 
   if (["sim", "ok", "show", "top", "legal", "kkk"].includes(t)) {
-    return "😊 Posso te ajudar com filhotes, valores, entrega, formas de pagamento ou reservas.";
+    return "😊 Posso te ajudar com filhotes, valores, entrega, formas de pagamento";
   }
 
   if (t === "nao") {
     return "Tudo bem 😊 Caso precise, é só me chamar.";
   }
 
-  return "😊 Posso te ajudar com filhotes, valores, entrega, formas de pagamento ou reservas.";
+  return "😊 Posso te ajudar com filhotes, valores, entrega, formas de pagamento";
 }
 
 async function responderMenu(sock: any, telefone: string) {
@@ -596,8 +590,8 @@ Regras obrigatórias:
 - Seja educada, curta, natural e profissional.
 - Use poucos emojis.
 - Não invente informações.
-- Não informe valores, formas de pagamento, entrega, reserva, disponibilidade, pedigree ou saúde se a informação não estiver no texto enviado pelo sistema.
-- Se o cliente pedir compra, reserva, desconto, negociação ou atendimento humano, responda exatamente: HUMANO_NECESSARIO
+- Não informe valores, formas de pagamento, entrega, disponibilidade, pedigree ou saúde se a informação não estiver no texto enviado pelo sistema.
+- Se o cliente pedir compra, desconto, negociação ou atendimento humano, responda exatamente: HUMANO_NECESSARIO
 - Se a pergunta for específica do canil e você não tiver certeza, responda exatamente: Vou verificar essa informação com o responsável 🐶
 - Para conversa simples, responda de forma amigável.
 

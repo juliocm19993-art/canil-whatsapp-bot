@@ -396,9 +396,6 @@ function querComprarOuReservar(texto: string) {
   const t = normalizarTexto(texto);
 
   const gatilhos = [
-    "quero reservar",
-    "reserva",
-    "reservar",
     "quero comprar",
     "comprar",
     "tenho interesse",

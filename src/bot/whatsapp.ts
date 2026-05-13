@@ -1,6 +1,7 @@
 import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
+  fetchLatestBaileysVersion,
 } from "@whiskeysockets/baileys";
 import qrcode from "qrcode-terminal";
 import pino from "pino";
@@ -774,45 +775,44 @@ async function startBot() {
   console.log("Iniciando bot...");
 
   const { state, saveCreds } = await useMultiFileAuthState("auth_info");
-
+  const { version } = await fetchLatestBaileysVersion();
   const sock = makeWASocket({
-    auth: state,
-    logger,
-    printQRInTerminal: true,
-    browser: ["Chrome", "Windows", "120.0.0"],
-    syncFullHistory: false,
-    markOnlineOnConnect: false,
-  });
+  auth: state,
+  logger,
+  browser: ["Ubuntu", "Chrome", "20.0.04"],
+  version,
+  syncFullHistory: false,
+  markOnlineOnConnect: false,
+});
 
   sock.ev.on("creds.update", saveCreds);
 
-  sock.ev.on("connection.update", async (update) => {
-    const { connection, qr, lastDisconnect } = update;
+sock.ev.on("connection.update", async (update) => {
+  const { connection, qr, lastDisconnect } = update;
 
-    if (qr) {
-      console.log("QR RECEBIDO");
-      qrcode.generate(qr, { small: true });
+  if (qr) {
+    console.clear();
+    console.log("ESCANEIE O QR CODE:");
+    qrcode.generate(qr, { small: true });
+  }
+
+  if (connection === "open") {
+    console.log("✅ WhatsApp conectado com sucesso!");
+  }
+
+  if (connection === "close") {
+    const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
+
+    console.log("❌ Conexão fechada. Código:", statusCode);
+
+    if (statusCode !== DisconnectReason.loggedOut) {
+      console.log("🔄 Reconectando WhatsApp...");
+      setTimeout(() => startBot(), 5000);
+    } else {
+      console.log("Sessão desconectada.");
     }
-
-    if (connection === "open") {
-      console.log("✅ WhatsApp conectado com sucesso!");
-    }
-
-    if (connection === "close") {
-      const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
-      console.log("❌ Conexão fechada. Código:", statusCode);
-
-      const deveReconectar = statusCode !== DisconnectReason.loggedOut;
-
-      if (deveReconectar) {
-        console.log("🔄 Reconectando WhatsApp...");
-        await delay(4000);
-        startBot();
-      } else {
-        console.log("Sessão deslogada. Apague auth_info e escaneie novamente.");
-      }
-    }
-  });
+  }
+});
 
   sock.ev.on("messages.upsert", async ({ messages }) => {
     for (const msg of messages) {

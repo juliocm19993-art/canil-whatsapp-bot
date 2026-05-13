@@ -557,10 +557,7 @@ async function responderOpcaoMenu(sock: any, telefone: string, opcao: string) {
     },
 "5": async () => {
   const resposta =
-    (await buscarInfoPorCategoria("reservas")) ||
-    (await buscarRespostaExata(
-      "reserva reservar disponibilidade sinal entrada reserva guardar filhote"
-    )) ||
+    (await buscarRespostaExata("reserva")) ||
     "Vou verificar essa informação com o responsável 🐶";
 
   await enviarTexto(sock, telefone, resposta);

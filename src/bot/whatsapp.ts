@@ -726,10 +726,13 @@ async function processarMensagem(sock: any, msg: any) {
       return;
     }
 
-    if (pediuHumano(texto) || querComprarOuReservar(texto)) {
-      await pausarIAParaHumano(sock, telefone);
-      return;
-    }
+if (
+  textoNormalizado !== "5" &&
+  (pediuHumano(texto) || querComprarOuReservar(texto))
+) {
+  await pausarIAParaHumano(sock, telefone);
+  return;
+}
 
     if (pediuMenu(texto)) {
       await responderMenu(sock, telefone);

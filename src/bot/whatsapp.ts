@@ -548,7 +548,11 @@ async function responderOpcaoMenu(sock: any, telefone: string, opcao: string) {
       await enviarTexto(sock, telefone, resposta);
     },
 "5": async () => {
-  await enviarTexto(sock, telefone, "TESTE RESERVAS");
+  const resposta =
+    (await buscarRespostaExata("reserva")) ||
+    "Vou verificar essa informação com o responsável 🐶";
+
+  await enviarTexto(sock, telefone, resposta);
 
   await pausarIAParaHumano(sock, telefone);
 },

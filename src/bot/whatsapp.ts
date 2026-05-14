@@ -102,7 +102,7 @@ async function salvarCliente(telefone: string) {
 async function buscarCliente(telefone: string) {
   const { data, error } = await supabase
     .from("clientes")
-    .select("telefone, boas_vindas_enviada, atendimento_humano")
+    .select("*")
     .eq("telefone", telefone)
     .maybeSingle();
 

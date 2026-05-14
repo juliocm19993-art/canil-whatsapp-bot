@@ -14,7 +14,7 @@ const cooldownUsuarios = new Map<string, number>();
 const processandoMensagem = new Set<string>();
 
 const COOLDOWN_MS = 2500;
-const TEMPO_BOAS_VINDAS_HORAS = 6;
+const TEMPO_BOAS_VINDAS_HORAS =  0.01;
 const PORT = process.env.PORT || 3000;
 
 function delay(ms: number) {

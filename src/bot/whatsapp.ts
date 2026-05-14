@@ -550,11 +550,11 @@ async function responderOpcaoMenu(sock: any, telefone: string, opcao: string) {
 "5": async () => {
   const resposta =
     (await buscarRespostaExata("reserva")) ||
-    "Vou verificar essa informação com o responsável 🐶";
+    mensagemTransferenciaHumana();
 
   await enviarTexto(sock, telefone, resposta);
 
-  await pausarIAParaHumano(sock, telefone);
+  await atualizarCliente(telefone, { atendimento_humano: true });
 },
 };
 

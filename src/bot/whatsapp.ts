@@ -14,6 +14,7 @@ const cooldownUsuarios = new Map<string, number>();
 const processandoMensagem = new Set<string>();
 
 const COOLDOWN_MS = 2500;
+const TEMPO_BOAS_VINDAS_HORAS = 0.01;
 const PORT = process.env.PORT || 3001;
 
 function delay(ms: number) {
@@ -708,12 +709,28 @@ async function processarMensagem(sock: any, msg: any) {
 
     let cliente = await buscarCliente(telefone);
 
-    if (!cliente?.boas_vindas_enviada) {
-      await enviarTexto(sock, telefone, mensagemBoasVindas());
-      await atualizarCliente(telefone, { boas_vindas_enviada: true });
-      console.log("Mensagem de boas-vindas enviada!");
-      return;
-    }
+const agora = new Date();
+
+const ultimaBoasVindas = (cliente as any)?.ultima_boas_vindas
+  ? new Date((cliente as any).ultima_boas_vindas)
+  : null;
+
+const deveEnviarBoasVindas =
+  !ultimaBoasVindas ||
+  agora.getTime() - ultimaBoasVindas.getTime() >
+    TEMPO_BOAS_VINDAS_HORAS * 60 * 60 * 1000;
+
+if (deveEnviarBoasVindas) {
+  await enviarTexto(sock, telefone, mensagemBoasVindas());
+
+  await atualizarCliente(telefone, {
+    ultima_boas_vindas: agora.toISOString(),
+    atendimento_humano: false,
+  });
+
+  console.log("Mensagem de boas-vindas enviada!");
+  return;
+}
 
     if (cliente?.atendimento_humano) {
       console.log("Atendimento humano ativo. IA não respondeu:", telefone);

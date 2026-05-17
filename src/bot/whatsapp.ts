@@ -85,6 +85,11 @@ async function enviarTexto(sock: any, telefone: string, texto: string) {
   await marcarDigitando(sock, telefone);
   await sock.sendMessage(telefone, { text: texto });
   await salvarMensagem(telefone, texto, "enviada");
+
+  if (mensagemEncerraAtendimentoHumano(texto)) {
+    await atualizarCliente(telefone, { atendimento_humano: true });
+    console.log("IA pausada automaticamente após mensagem de encerramento:", telefone);
+  }
 }
 
 async function salvarCliente(telefone: string) {
@@ -351,6 +356,15 @@ Ele irá conversar com você sobre:
 
 🤖 Atendimento automático pausado.
 ⏳ Aguarde só um instante, será um prazer atender você!`;
+}
+
+function mensagemEncerraAtendimentoHumano(texto: string) {
+  const t = normalizarTexto(texto);
+
+  return (
+    t.includes("atendimento automatico finalizado") ||
+    t.includes("atendimento automatico pausado")
+  );
 }
 
 function pediuMenu(texto: string) {
@@ -709,31 +723,36 @@ async function processarMensagem(sock: any, msg: any) {
 
     let cliente = await buscarCliente(telefone);
 
-const agora = new Date();
+    const dataAtual = new Date();
 
-const ultimaBoasVindas = (cliente as any)?.ultima_boas_vindas
-  ? new Date((cliente as any).ultima_boas_vindas)
-  : null;
+    const ultimaBoasVindas = (cliente as any)?.ultima_boas_vindas
+      ? new Date((cliente as any).ultima_boas_vindas)
+      : null;
 
-const deveEnviarBoasVindas =
-  !ultimaBoasVindas ||
-  agora.getTime() - ultimaBoasVindas.getTime() >
-    TEMPO_BOAS_VINDAS_HORAS * 60 * 60 * 1000;
+    const tempoBoasVindasExpirou =
+      !ultimaBoasVindas ||
+      dataAtual.getTime() - ultimaBoasVindas.getTime() >
+        TEMPO_BOAS_VINDAS_HORAS * 60 * 60 * 1000;
 
-if (deveEnviarBoasVindas) {
-  await enviarTexto(sock, telefone, mensagemBoasVindas());
-
-  await atualizarCliente(telefone, {
-    ultima_boas_vindas: agora.toISOString(),
-    atendimento_humano: false,
-  });
-
-  console.log("Mensagem de boas-vindas enviada!");
-  return;
-}
-
-    if (cliente?.atendimento_humano) {
+    if (cliente?.atendimento_humano && !tempoBoasVindasExpirou) {
       console.log("Atendimento humano ativo. IA não respondeu:", telefone);
+      return;
+    }
+
+    if (cliente?.atendimento_humano && tempoBoasVindasExpirou) {
+      await atualizarCliente(telefone, { atendimento_humano: false });
+      cliente = await buscarCliente(telefone);
+    }
+
+    if (tempoBoasVindasExpirou) {
+      await enviarTexto(sock, telefone, mensagemBoasVindas());
+
+      await atualizarCliente(telefone, {
+        ultima_boas_vindas: dataAtual.toISOString(),
+        atendimento_humano: false,
+      });
+
+      console.log("Mensagem de boas-vindas enviada!");
       return;
     }
 

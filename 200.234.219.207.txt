@@ -1,0 +1,17 @@
+IP´VPS 200.234.219.207
+PORTA 22
+root
+@Polo159630
+
+git
+
+git add .
+git commit -m "sua atualização"
+git push
+
+
+vps
+
+cd ~/canil-whatsapp-bot
+git pull
+pm2 restart all

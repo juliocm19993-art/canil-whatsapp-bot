@@ -469,11 +469,10 @@ function ehElogio(texto: string) {
 
   return elogios.some((e) => t.includes(e));
 }
-
 function ehMensagemSimples(texto: string) {
   const t = normalizarTexto(texto);
 
-  return [
+  const saudacoes = [
     "ok",
     "oi",
     "ola",
@@ -491,7 +490,17 @@ function ehMensagemSimples(texto: string) {
     "sim",
     "nao",
     "?",
-  ].includes(t);
+    "oi",
+    "ola",
+    "bom dia",
+    "boa tarde",
+    "boa noite",
+    "boa note",
+    "boa noute",
+    "tudo bem",    
+  ];
+
+  return saudacoes.some((s) => t.includes(s));
 }
 
 function respostaMensagemSimples(texto: string) {

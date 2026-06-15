@@ -55,12 +55,12 @@ async function uploadArquivos(
     for (const file of Array.from(files)) {
       const isVideo = tipo === "videos";
 
-      const tamanhoMB = file.size / 1024 / 1024;
+const tamanhoMB = file.size / 1024 / 1024;
 
-      if (isVideo && tamanhoMB > 50) {
-        alert("Vídeo muito grande. Máximo 50MB.");
-        continue;
-      }
+if (isVideo && tamanhoMB > 500) {
+  alert("Vídeo muito grande. Máximo 500MB.");
+  continue;
+}
 
       const ext = file.name.split(".").pop();
 

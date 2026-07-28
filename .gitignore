@@ -4,3 +4,5 @@ auth_info/
 .env
 auth_info_backup/
 auth_info/
+auth_info/
+auth_info_backup/

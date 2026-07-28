@@ -2,3 +2,5 @@ node_modules/
 .next/
 auth_info/
 .env
+auth_info_backup/
+auth_info/

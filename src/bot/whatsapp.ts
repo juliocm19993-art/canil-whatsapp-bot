@@ -837,6 +837,8 @@ async function startBot() {
   sock.ev.on("creds.update", saveCreds);
 
 sock.ev.on("connection.update", async (update) => {
+  console.log("UPDATE:", JSON.stringify(update, null, 2));
+
   const { connection, qr, lastDisconnect } = update;
 
   if (qr) {

@@ -841,6 +841,7 @@ const sock = makeWASocket({
   syncFullHistory: false,
   markOnlineOnConnect: false,
   connectTimeoutMs: 60000,
+  generateHighQualityLinkPreview: false,
 });
 
   sock.ev.on("creds.update", saveCreds);

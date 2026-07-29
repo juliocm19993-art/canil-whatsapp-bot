@@ -857,7 +857,7 @@ sock.ev.on("connection.update", async (update) => {
 
     if (statusCode !== DisconnectReason.loggedOut) {
       console.log("🔄 Reconectando WhatsApp...");
-      setTimeout(() => startBot(), 5000);
+      setTimeout(() => startBot(), 15000);
     } else {
       console.log("Sessão desconectada.");
     }

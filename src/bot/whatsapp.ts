@@ -828,9 +828,10 @@ const { state, saveCreds } = await useMultiFileAuthState("auth_info");
 const sock = makeWASocket({
   auth: state,
   logger,
-  browser: ["Ubuntu", "Chrome", "20.0.04"],
+  browser: ["Chrome", "Linux", "120.0.0"],
   syncFullHistory: false,
   markOnlineOnConnect: false,
+  connectTimeoutMs: 60000,
 });
 
   sock.ev.on("creds.update", saveCreds);

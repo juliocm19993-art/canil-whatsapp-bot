@@ -823,13 +823,12 @@ if (pediuHumano(texto) || querComprarOuReservar(texto)) {
 async function startBot() {
   console.log("Iniciando bot...");
 
-  const { state, saveCreds } = await useMultiFileAuthState("auth_info");
-  const { version } = await fetchLatestBaileysVersion();
-  const sock = makeWASocket({
+const { state, saveCreds } = await useMultiFileAuthState("auth_info");
+
+const sock = makeWASocket({
   auth: state,
   logger,
   browser: ["Ubuntu", "Chrome", "20.0.04"],
-  version,
   syncFullHistory: false,
   markOnlineOnConnect: false,
 });

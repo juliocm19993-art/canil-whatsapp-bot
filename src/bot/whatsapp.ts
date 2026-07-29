@@ -834,10 +834,13 @@ async function startBot() {
 
 const { state, saveCreds } = await useMultiFileAuthState("auth_info");
 
+const { version } = await fetchLatestBaileysVersion();
+
 const sock = makeWASocket({
+  version,
   auth: state,
   logger,
-  browser: ["Chrome", "Linux", "120.0.0"],
+  browser: ["Ubuntu", "Chrome", "22.04"],
   syncFullHistory: false,
   markOnlineOnConnect: false,
   connectTimeoutMs: 60000,

@@ -10,6 +10,8 @@ import http from "http";
 
 const logger = pino({ level: "silent" });
 
+let botIniciando = false;
+
 const cooldownUsuarios = new Map<string, number>();
 const processandoMensagem = new Set<string>();
 
@@ -821,6 +823,13 @@ if (pediuHumano(texto) || querComprarOuReservar(texto)) {
 }
 
 async function startBot() {
+  if (botIniciando) {
+    console.log("Bot já está iniciando, ignorando...");
+    return;
+  }
+
+  botIniciando = true;
+
   console.log("Iniciando bot...");
 
 const { state, saveCreds } = await useMultiFileAuthState("auth_info");
@@ -858,7 +867,10 @@ sock.ev.on("connection.update", async (update) => {
 
     if (statusCode !== DisconnectReason.loggedOut) {
       console.log("🔄 Reconectando WhatsApp...");
-      setTimeout(() => startBot(), 15000);
+setTimeout(() => {
+  botIniciando = false;
+  startBot();
+}, 15000);
     } else {
       console.log("Sessão desconectada.");
     }
